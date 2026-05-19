@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 import { A3_SYSTEM_PROMPT } from "@/lib/a3-prompt";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
 export async function POST(request: Request) {
   if (!process.env.GROQ_API_KEY) {
     return NextResponse.json(
@@ -11,6 +9,8 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+
+  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
   const { messages } = await request.json();
 
