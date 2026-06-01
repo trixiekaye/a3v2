@@ -2,41 +2,23 @@
 
 import { useState, useEffect, useRef } from "react";
 
-export type KBFile = {
+type KBFile = {
   id: string;
+  project_key: string;
   name: string;
-  content: string;
-  sizeBytes: number;
-  addedAt: string;
+  size_bytes: number;
+  created_at: string;
 };
 
-const ACCEPTED = ".txt,.md,.json,.csv,.yaml,.yml,.js,.ts,.tsx,.jsx,.py,.xml,.html,.css,.env.example";
-const MAX_FILE_BYTES = 150_000; // 150 KB per file
+type ProjectGroup = {
+  project_key: string;
+  files: KBFile[];
+  total_bytes: number;
+  last_added: string;
+};
 
-function storageKey(projectKey: string) {
-  return `a3_kb_${projectKey.trim().toUpperCase()}`;
-}
-
-function loadFiles(projectKey: string): KBFile[] {
-  if (!projectKey.trim()) return [];
-  try {
-    const raw = localStorage.getItem(storageKey(projectKey));
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function saveFiles(projectKey: string, files: KBFile[]) {
-  localStorage.setItem(storageKey(projectKey), JSON.stringify(files));
-}
-
-function allProjects(): string[] {
-  const keys: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k?.startsWith("a3_kb_")) keys.push(k.replace("a3_kb_", ""));
-  }
-  return keys.sort();
-}
+const ACCEPTED = ".txt,.md,.json,.csv,.yaml,.yml,.js,.ts,.tsx,.jsx,.py,.xml,.html,.css";
+const MAX_BYTES = 150_000;
 
 function fmtSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -44,314 +26,350 @@ function fmtSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function totalContext(files: KBFile[]) {
-  return files.reduce((s, f) => s + f.sizeBytes, 0);
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-const card: React.CSSProperties = {
-  background: "linear-gradient(135deg, rgba(201,168,76,0.08) 0%, rgba(255,255,255,0.84) 44%)",
-  border: "1px solid rgba(201,168,76,0.30)",
-  borderLeft: "3px solid var(--gold-500)",
-  borderRadius: 10,
-  padding: "24px 28px",
-};
-const eyebrow: React.CSSProperties = {
-  fontFamily: "var(--font-heading)",
-  fontSize: 10,
-  letterSpacing: "0.22em",
-  color: "var(--gold-700)",
-  textTransform: "uppercase" as const,
-  fontWeight: 600,
-  marginBottom: 20,
-};
+function groupByProject(files: KBFile[]): ProjectGroup[] {
+  const map = new Map<string, KBFile[]>();
+  for (const f of files) {
+    if (!map.has(f.project_key)) map.set(f.project_key, []);
+    map.get(f.project_key)!.push(f);
+  }
+  return Array.from(map.entries()).map(([project_key, files]) => ({
+    project_key,
+    files,
+    total_bytes: files.reduce((s, f) => s + f.size_bytes, 0),
+    last_added: files.reduce((latest, f) => f.created_at > latest ? f.created_at : latest, files[0].created_at),
+  }));
+}
+
+/* ── Shared styles ─────────────────────────────────────────────── */
 const inp: React.CSSProperties = {
-  width: "100%",
   background: "rgba(255,255,255,0.78)",
   border: "1px solid rgba(201,168,76,0.25)",
-  borderRadius: 6,
-  padding: "10px 13px",
-  fontSize: 14,
-  color: "var(--ghost-text)",
-  outline: "none",
-  fontFamily: "var(--font-body)",
-  fontWeight: 500,
-  transition: "border-color 0.15s, box-shadow 0.15s",
+  borderRadius: 6, padding: "9px 13px",
+  fontSize: 14, color: "var(--ghost-text)",
+  outline: "none", fontFamily: "var(--font-body)",
+  fontWeight: 500, transition: "border-color 0.15s, box-shadow 0.15s",
 };
 
+function focusGold(e: React.FocusEvent<HTMLInputElement>) {
+  e.target.style.borderColor = "var(--gold-500)";
+  (e.target as HTMLElement).style.boxShadow = "0 0 0 3px rgba(201,168,76,0.14)";
+}
+function blurGold(e: React.FocusEvent<HTMLInputElement>) {
+  e.target.style.borderColor = "rgba(201,168,76,0.25)";
+  (e.target as HTMLElement).style.boxShadow = "none";
+}
+
+/* ── Main page ─────────────────────────────────────────────────── */
 export default function KnowledgePage() {
+  const [allFiles, setAllFiles]       = useState<KBFile[]>([]);
   const [projectKey, setProjectKey]   = useState("");
-  const [files, setFiles]             = useState<KBFile[]>([]);
-  const [projects, setProjects]       = useState<string[]>([]);
   const [dragging, setDragging]       = useState(false);
   const [uploading, setUploading]     = useState(false);
-  const [notice, setNotice]           = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [notice, setNotice]           = useState<{ msg: string; type: "ok" | "err" } | null>(null);
+  const [expanded, setExpanded]       = useState<Set<string>>(new Set());
+  const [deleting, setDeleting]       = useState<string | null>(null);
+  const [addingTo, setAddingTo]       = useState<string | null>(null); // project key for inline add
 
-  // Load saved project keys on mount
-  useEffect(() => { setProjects(allProjects()); }, []);
+  const mainFileRef = useRef<HTMLInputElement>(null);
+  const rowFileRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
-  // Reload files when project changes
-  useEffect(() => {
-    setFiles(loadFiles(projectKey));
-  }, [projectKey]);
-
-  function flash(msg: string) {
-    setNotice(msg);
-    setTimeout(() => setNotice(""), 3000);
+  function flash(msg: string, type: "ok" | "err" = "ok") {
+    setNotice({ msg, type });
+    setTimeout(() => setNotice(null), 3000);
   }
 
-  async function handleFiles(fileList: FileList | null) {
-    if (!fileList || !projectKey.trim()) {
-      flash("Enter a project key first.");
-      return;
-    }
-    setUploading(true);
-    const current = loadFiles(projectKey);
-    const next = [...current];
+  async function loadFiles() {
+    const r = await fetch("/api/knowledge");
+    if (r.ok) setAllFiles(await r.json());
+  }
 
+  useEffect(() => { loadFiles(); }, []);
+
+  async function uploadFiles(fileList: FileList | null, targetProject: string) {
+    if (!fileList || !targetProject.trim()) { flash("Enter a project key first.", "err"); return; }
+    setUploading(true);
+    let added = 0;
     for (const file of Array.from(fileList)) {
       const text = await file.text();
-      const truncated = text.length > MAX_FILE_BYTES ? text.slice(0, MAX_FILE_BYTES) : text;
-      const wasTruncated = text.length > MAX_FILE_BYTES;
-
-      // Replace if same name already exists
-      const existingIdx = next.findIndex(f => f.name === file.name);
-      const entry: KBFile = {
-        id: `${Date.now()}-${Math.random()}`,
-        name: file.name,
-        content: truncated,
-        sizeBytes: new TextEncoder().encode(truncated).length,
-        addedAt: new Date().toISOString(),
-      };
-
-      if (existingIdx >= 0) next[existingIdx] = entry;
-      else next.push(entry);
-
-      if (wasTruncated) flash(`"${file.name}" was truncated to 150 KB.`);
+      const truncated = text.length > MAX_BYTES ? text.slice(0, MAX_BYTES) : text;
+      const r = await fetch("/api/knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_key: targetProject.toUpperCase(), name: file.name, content: truncated }),
+      });
+      if (r.ok) added++;
+      if (text.length > MAX_BYTES) flash(`"${file.name}" truncated to 150 KB.`, "ok");
     }
-
-    saveFiles(projectKey, next);
-    setFiles(next);
-    setProjects(allProjects());
     setUploading(false);
-    if (!notice) flash(`${fileList.length} file${fileList.length > 1 ? "s" : ""} added to ${projectKey.toUpperCase()}.`);
+    await loadFiles();
+    // Auto-expand the project after upload
+    setExpanded(prev => new Set([...prev, targetProject.toUpperCase()]));
+    if (added > 0) flash(`${added} file${added > 1 ? "s" : ""} added to ${targetProject.toUpperCase()}.`);
   }
 
-  function removeFile(id: string) {
-    const next = files.filter(f => f.id !== id);
-    saveFiles(projectKey, next);
-    setFiles(next);
-    if (next.length === 0) setProjects(allProjects());
+  async function deleteFile(id: string) {
+    setDeleting(id);
+    await fetch(`/api/knowledge/${id}`, { method: "DELETE" });
+    await loadFiles();
+    setDeleting(null);
   }
 
-  function clearProject() {
-    localStorage.removeItem(storageKey(projectKey));
-    setFiles([]);
-    setProjects(allProjects());
-    flash(`Cleared all files for ${projectKey.toUpperCase()}.`);
+  async function clearProject(projectKey: string) {
+    const group = groups.find(g => g.project_key === projectKey);
+    if (!group) return;
+    await Promise.all(group.files.map(f => fetch(`/api/knowledge/${f.id}`, { method: "DELETE" })));
+    await loadFiles();
+    flash(`Cleared all files for ${projectKey}.`);
   }
 
-  const contextKB = (totalContext(files) / 1024).toFixed(1);
+  function toggleExpand(key: string) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
+
+  const groups = groupByProject(allFiles);
+  const totalFiles = allFiles.length;
+  const totalBytes = allFiles.reduce((s, f) => s + f.size_bytes, 0);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "40px 44px", maxWidth: 1120 }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: "40px 44px", maxWidth: 1100 }}>
 
       {/* Header */}
-      <div style={{ marginBottom: 36 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <span style={{ color: "var(--gold-500)", fontSize: 11 }}>◆</span>
-          <h1 style={{ fontFamily: "var(--font-heading)", fontSize: 20, fontWeight: 700, color: "var(--gold-500)", letterSpacing: "0.14em" }}>Knowledge Base</h1>
-        </div>
-        <div style={{ height: 1, width: 88, background: "linear-gradient(90deg, var(--gold-500), rgba(201,168,76,0.15), transparent)" }} />
-        <p style={{ fontSize: 13.5, color: "var(--ghost-secondary)", marginTop: 10, fontFamily: "var(--font-body)", fontWeight: 500 }}>
-          Upload reference files per Jira project. The AI will use them as context when generating cards.
-        </p>
-      </div>
-
-      {/* Notice banner */}
-      {notice && (
-        <div style={{ marginBottom: 20, padding: "10px 16px", borderRadius: 8, background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.3)", fontSize: 13, fontWeight: 500, color: "var(--gold-700)", fontFamily: "var(--font-body)" }}>
-          ◆ {notice}
-        </div>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
-
-        {/* LEFT — Upload panel */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-
-          {/* Project selector */}
-          <div style={card}>
-            <p style={eyebrow}>◈ Project</p>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--ghost-secondary)", marginBottom: 7, fontFamily: "var(--font-body)" }}>
-                Project Key
-              </label>
-              <input
-                value={projectKey}
-                onChange={e => setProjectKey(e.target.value.toUpperCase())}
-                placeholder="e.g. PROJ, ENG, CMS"
-                style={{ ...inp, fontFamily: "monospace", fontWeight: 700, letterSpacing: "0.06em" }}
-                onFocus={e => { e.target.style.borderColor = "var(--gold-500)"; (e.target as HTMLElement).style.boxShadow = "0 0 0 3px rgba(201,168,76,0.14)"; }}
-                onBlur={e => { e.target.style.borderColor = "rgba(201,168,76,0.25)"; (e.target as HTMLElement).style.boxShadow = "none"; }}
-              />
+      <div style={{ marginBottom: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span style={{ color: "var(--gold-500)", fontSize: 11 }}>◆</span>
+              <h1 style={{ fontFamily: "var(--font-heading)", fontSize: 20, fontWeight: 700, color: "var(--gold-500)", letterSpacing: "0.14em" }}>Knowledge Base</h1>
             </div>
-
-            {/* Existing projects quick-select */}
-            {projects.length > 0 && (
-              <div>
-                <p style={{ fontSize: 12, fontWeight: 600, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", marginBottom: 8 }}>Existing projects</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {projects.map(p => (
-                    <button key={p} onClick={() => setProjectKey(p)}
-                      style={{
-                        padding: "4px 12px", borderRadius: 20, cursor: "pointer",
-                        fontFamily: "monospace", fontSize: 12, fontWeight: 700, letterSpacing: "0.04em",
-                        background: projectKey === p ? "rgba(201,168,76,0.18)" : "rgba(255,255,255,0.65)",
-                        border: `1px solid ${projectKey === p ? "rgba(201,168,76,0.5)" : "rgba(201,168,76,0.25)"}`,
-                        color: projectKey === p ? "var(--gold-700)" : "var(--ghost-secondary)",
-                        transition: "all 0.15s",
-                      }}>
-                      {p}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Drop zone */}
-          <div style={card}>
-            <p style={eyebrow}>◈ Upload Files</p>
-            <div
-              onDragEnter={() => setDragging(true)}
-              onDragLeave={() => setDragging(false)}
-              onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}
-              onClick={() => fileInputRef.current?.click()}
-              style={{
-                border: `2px dashed ${dragging ? "var(--gold-500)" : "rgba(201,168,76,0.35)"}`,
-                borderRadius: 8,
-                padding: "32px 20px",
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
-                cursor: "pointer",
-                background: dragging ? "rgba(201,168,76,0.06)" : "rgba(255,255,255,0.4)",
-                transition: "all 0.2s",
-              }}>
-              <span style={{ fontSize: 28, color: dragging ? "var(--gold-500)" : "rgba(201,168,76,0.4)" }}>◈</span>
-              <div style={{ textAlign: "center" }}>
-                <p style={{ fontFamily: "var(--font-body)", fontSize: 14, fontWeight: 600, color: uploading ? "var(--ghost-muted)" : "var(--ghost-text)" }}>
-                  {uploading ? "Uploading…" : "Drop files here or click to browse"}
-                </p>
-                <p style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--ghost-muted)", marginTop: 4, fontWeight: 500 }}>
-                  .txt · .md · .json · .csv · .yaml · .js · .ts · .py · .xml · .html
-                </p>
-                <p style={{ fontFamily: "var(--font-body)", fontSize: 11.5, color: "var(--ghost-muted)", marginTop: 4 }}>
-                  Max 150 KB per file
-                </p>
-              </div>
-            </div>
-            <input ref={fileInputRef} type="file" multiple accept={ACCEPTED} style={{ display: "none" }}
-              onChange={e => { handleFiles(e.target.files); (e.target as HTMLInputElement).value = ""; }} />
-          </div>
-
-          {/* Accepted formats info */}
-          <div style={{ padding: "14px 18px", borderRadius: 8, background: "rgba(201,168,76,0.07)", border: "1px solid rgba(201,168,76,0.22)", display: "flex", gap: 12, alignItems: "flex-start" }}>
-            <span style={{ color: "var(--gold-500)", flexShrink: 0, fontSize: 13, marginTop: 1 }}>◆</span>
-            <p style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ghost-secondary)", lineHeight: 1.6, fontFamily: "var(--font-body)" }}>
-              Files are stored locally in your browser and injected into the AI context per message. Useful for PRDs, API specs, design docs, existing stories, or any reference material.
+            <div style={{ height: 1, width: 88, background: "linear-gradient(90deg, var(--gold-500), rgba(201,168,76,0.15), transparent)" }} />
+            <p style={{ fontSize: 13.5, color: "var(--ghost-secondary)", marginTop: 10, fontFamily: "var(--font-body)", fontWeight: 500 }}>
+              Upload reference files per project. The AI uses them in every chat — with or without Jira connected.
             </p>
           </div>
-        </div>
-
-        {/* RIGHT — File list */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ ...card, minHeight: 200 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-              <div>
-                <p style={{ ...eyebrow, marginBottom: 4 }}>
-                  ◈ {projectKey ? `${projectKey} Files` : "Files"}
-                </p>
-                {files.length > 0 && (
-                  <p style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>
-                    {files.length} file{files.length !== 1 ? "s" : ""} · {contextKB} KB context
-                  </p>
-                )}
-              </div>
-              {files.length > 0 && (
-                <button onClick={clearProject}
-                  style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ghost-muted)", background: "none", border: "none", cursor: "pointer", fontFamily: "var(--font-body)", transition: "color 0.15s" }}
-                  onMouseEnter={e => (e.currentTarget.style.color = "#b83030")}
-                  onMouseLeave={e => (e.currentTarget.style.color = "var(--ghost-muted)")}>
-                  Clear all
-                </button>
-              )}
-            </div>
-
-            {!projectKey.trim() ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 40, gap: 10 }}>
-                <span style={{ fontSize: 24, color: "rgba(201,168,76,0.3)" }}>◈</span>
-                <p style={{ fontFamily: "var(--font-body)", fontSize: 13.5, fontWeight: 500, color: "var(--ghost-muted)" }}>Enter a project key to view files</p>
-              </div>
-            ) : files.length === 0 ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 40, gap: 10 }}>
-                <span style={{ fontSize: 24, color: "rgba(201,168,76,0.3)" }}>◈</span>
-                <p style={{ fontFamily: "var(--font-body)", fontSize: 13.5, fontWeight: 500, color: "var(--ghost-muted)" }}>No files for {projectKey}</p>
-                <p style={{ fontFamily: "var(--font-body)", fontSize: 12.5, color: "var(--ghost-muted)", fontWeight: 400 }}>Upload files on the left to get started</p>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                {files.map((f, i) => (
-                  <div key={f.id} style={{
-                    display: "flex", alignItems: "center", gap: 12, padding: "12px 0",
-                    borderBottom: i < files.length - 1 ? "1px solid rgba(201,168,76,0.14)" : "none",
-                  }}>
-                    {/* File icon */}
-                    <div style={{ width: 36, height: 36, borderRadius: 6, flexShrink: 0, background: "linear-gradient(135deg, rgba(201,168,76,0.15), rgba(201,168,76,0.04))", border: "1px solid rgba(201,168,76,0.28)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="var(--gold-700)" strokeWidth={1.8}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                      </svg>
-                    </div>
-
-                    {/* File info */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontFamily: "var(--font-body)", fontSize: 13.5, fontWeight: 600, color: "var(--ghost-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</p>
-                      <p style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--ghost-muted)", fontWeight: 500, marginTop: 2 }}>
-                        {fmtSize(f.sizeBytes)} · {new Date(f.addedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                      </p>
-                    </div>
-
-                    {/* Remove */}
-                    <button onClick={() => removeFile(f.id)}
-                      style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ghost-muted)", background: "none", border: "none", cursor: "pointer", fontFamily: "var(--font-body)", transition: "color 0.15s", flexShrink: 0 }}
-                      onMouseEnter={e => (e.currentTarget.style.color = "#b83030")}
-                      onMouseLeave={e => (e.currentTarget.style.color = "var(--ghost-muted)")}>
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Context size meter */}
-          {files.length > 0 && (
-            <div style={{ padding: "16px 20px", borderRadius: 10, background: "linear-gradient(135deg, rgba(201,168,76,0.08) 0%, rgba(255,255,255,0.84) 44%)", border: "1px solid rgba(201,168,76,0.28)", borderLeft: "3px solid var(--gold-500)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <span style={{ fontFamily: "var(--font-heading)", fontSize: 9.5, letterSpacing: "0.2em", color: "var(--gold-700)", textTransform: "uppercase", fontWeight: 600 }}>Context size</span>
-                <span style={{ fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 700, color: "var(--gold-700)" }}>{contextKB} KB</span>
-              </div>
-              {/* Bar */}
-              <div style={{ height: 5, borderRadius: 3, background: "rgba(201,168,76,0.15)", overflow: "hidden" }}>
-                <div style={{ height: "100%", borderRadius: 3, background: "linear-gradient(90deg, var(--gold-500), var(--gold-400))", width: `${Math.min(100, (totalContext(files) / 150000) * 100)}%`, transition: "width 0.3s" }} />
-              </div>
-              <p style={{ fontFamily: "var(--font-body)", fontSize: 11.5, color: "var(--ghost-muted)", marginTop: 7, fontWeight: 500 }}>
-                Injected into every chat message for this project. Gemini 2.5 Pro supports up to 2M tokens.
-              </p>
+          {totalFiles > 0 && (
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <p style={{ fontFamily: "var(--font-heading)", fontSize: 18, fontWeight: 700, color: "var(--gold-500)" }}>{totalFiles}</p>
+              <p style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>files · {fmtSize(totalBytes)}</p>
             </div>
           )}
         </div>
       </div>
+
+      {/* Notice */}
+      {notice && (
+        <div style={{ marginBottom: 20, padding: "10px 16px", borderRadius: 8, fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 500,
+          background: notice.type === "ok" ? "rgba(201,168,76,0.1)" : "rgba(200,80,80,0.08)",
+          border: `1px solid ${notice.type === "ok" ? "rgba(201,168,76,0.3)" : "rgba(200,80,80,0.22)"}`,
+          color: notice.type === "ok" ? "var(--gold-700)" : "#b83030",
+        }}>
+          {notice.type === "ok" ? "◆ " : "✗ "}{notice.msg}
+        </div>
+      )}
+
+      {/* Upload section */}
+      <div style={{
+        background: "linear-gradient(135deg, rgba(201,168,76,0.08) 0%, rgba(255,255,255,0.84) 44%)",
+        border: "1px solid rgba(201,168,76,0.30)", borderLeft: "3px solid var(--gold-500)",
+        borderRadius: 10, padding: "20px 24px", marginBottom: 24,
+      }}>
+        <p style={{ fontFamily: "var(--font-heading)", fontSize: 10, letterSpacing: "0.22em", color: "var(--gold-700)", textTransform: "uppercase", fontWeight: 600, marginBottom: 16 }}>
+          ◈ Add Files
+        </p>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div style={{ flex: "0 0 160px" }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--ghost-secondary)", marginBottom: 6, fontFamily: "var(--font-body)" }}>Project Key</label>
+            <input value={projectKey} onChange={e => setProjectKey(e.target.value.toUpperCase())}
+              placeholder="e.g. PROJ"
+              style={{ ...inp, width: "100%", fontFamily: "monospace", fontWeight: 700, letterSpacing: "0.06em" }}
+              onFocus={focusGold} onBlur={blurGold} />
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--ghost-secondary)", marginBottom: 6, fontFamily: "var(--font-body)" }}>Files</label>
+            <div
+              onDragEnter={() => setDragging(true)}
+              onDragLeave={() => setDragging(false)}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); setDragging(false); uploadFiles(e.dataTransfer.files, projectKey); }}
+              onClick={() => mainFileRef.current?.click()}
+              style={{
+                border: `2px dashed ${dragging ? "var(--gold-500)" : "rgba(201,168,76,0.35)"}`,
+                borderRadius: 8, padding: "14px 20px",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                cursor: "pointer", background: dragging ? "rgba(201,168,76,0.06)" : "rgba(255,255,255,0.5)",
+                transition: "all 0.2s",
+              }}>
+              <span style={{ fontSize: 16, color: dragging ? "var(--gold-500)" : "rgba(201,168,76,0.5)" }}>◈</span>
+              <span style={{ fontFamily: "var(--font-body)", fontSize: 13.5, fontWeight: 500, color: uploading ? "var(--ghost-muted)" : "var(--ghost-secondary)" }}>
+                {uploading ? "Uploading…" : "Drop files or click to browse"}
+              </span>
+              <span style={{ fontSize: 11.5, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>· 150 KB max</span>
+            </div>
+          </div>
+        </div>
+        <input ref={mainFileRef} type="file" multiple accept={ACCEPTED} style={{ display: "none" }}
+          onChange={e => { uploadFiles(e.target.files, projectKey); (e.target as HTMLInputElement).value = ""; }} />
+        <p style={{ fontSize: 12, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", fontWeight: 500, marginTop: 12 }}>
+          Supported: .txt · .md · .json · .csv · .yaml · .js · .ts · .py · .xml · .html · .css
+        </p>
+      </div>
+
+      {/* Table */}
+      {groups.length === 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 60, gap: 12 }}>
+          <span style={{ fontSize: 32, color: "rgba(201,168,76,0.25)" }}>◈</span>
+          <p style={{ fontFamily: "var(--font-body)", fontSize: 15, fontWeight: 500, color: "var(--ghost-muted)" }}>No knowledge base yet</p>
+          <p style={{ fontFamily: "var(--font-body)", fontSize: 13, color: "var(--ghost-muted)" }}>Enter a project key above and drop your files to get started</p>
+        </div>
+      ) : (
+        <div style={{
+          background: "linear-gradient(135deg, rgba(201,168,76,0.06) 0%, rgba(255,255,255,0.84) 44%)",
+          border: "1px solid rgba(201,168,76,0.28)", borderRadius: 10, overflow: "hidden",
+        }}>
+
+          {/* Table header */}
+          <div style={{
+            display: "grid", gridTemplateColumns: "2fr 80px 100px 150px 1fr",
+            padding: "10px 20px",
+            borderBottom: "1px solid rgba(201,168,76,0.2)",
+            background: "rgba(201,168,76,0.06)",
+          }}>
+            {["Project", "Files", "Size", "Last Updated", ""].map(h => (
+              <span key={h} style={{ fontFamily: "var(--font-heading)", fontSize: 9, letterSpacing: "0.22em", color: "var(--gold-700)", textTransform: "uppercase", fontWeight: 600 }}>{h}</span>
+            ))}
+          </div>
+
+          {/* Project rows */}
+          {groups.map((g, gi) => {
+            const isOpen = expanded.has(g.project_key);
+            const isLast = gi === groups.length - 1;
+
+            return (
+              <div key={g.project_key} style={{ borderBottom: isLast ? "none" : "1px solid rgba(201,168,76,0.14)" }}>
+
+                {/* Project row */}
+                <div
+                  style={{
+                    display: "grid", gridTemplateColumns: "2fr 80px 100px 150px 1fr",
+                    padding: "14px 20px", alignItems: "center",
+                    cursor: "pointer", transition: "background 0.15s",
+                    background: isOpen ? "rgba(201,168,76,0.05)" : "transparent",
+                  }}
+                  onMouseEnter={e => { if (!isOpen) e.currentTarget.style.background = "rgba(201,168,76,0.03)"; }}
+                  onMouseLeave={e => { if (!isOpen) e.currentTarget.style.background = "transparent"; }}
+                  onClick={() => toggleExpand(g.project_key)}>
+
+                  {/* Project key */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 12, color: isOpen ? "var(--gold-500)" : "var(--ghost-muted)", transition: "transform 0.2s", display: "inline-block", transform: isOpen ? "rotate(90deg)" : "none" }}>▶</span>
+                    <span style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: "var(--ghost-text)", letterSpacing: "0.04em" }}>{g.project_key}</span>
+                  </div>
+
+                  {/* File count */}
+                  <span style={{ fontFamily: "var(--font-body)", fontSize: 13.5, fontWeight: 600, color: "var(--ghost-text)" }}>
+                    {g.files.length}
+                  </span>
+
+                  {/* Size */}
+                  <span style={{ fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 500, color: "var(--ghost-secondary)" }}>
+                    {fmtSize(g.total_bytes)}
+                  </span>
+
+                  {/* Last updated */}
+                  <span style={{ fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 500, color: "var(--ghost-muted)" }}>
+                    {fmtDate(g.last_added)}
+                  </span>
+
+                  {/* Actions */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={() => { rowFileRefs.current.get(g.project_key)?.click(); }}
+                      style={{ fontSize: 12, fontWeight: 600, color: "var(--gold-700)", background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 5, padding: "4px 10px", cursor: "pointer", fontFamily: "var(--font-body)", transition: "all 0.15s" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "rgba(201,168,76,0.18)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "rgba(201,168,76,0.1)"; }}>
+                      + Add
+                    </button>
+                    <button
+                      onClick={() => clearProject(g.project_key)}
+                      style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", background: "none", border: "none", cursor: "pointer", fontFamily: "var(--font-body)", transition: "color 0.15s" }}
+                      onMouseEnter={e => e.currentTarget.style.color = "#b83030"}
+                      onMouseLeave={e => e.currentTarget.style.color = "var(--ghost-muted)"}>
+                      Clear
+                    </button>
+                    <input
+                      ref={el => { if (el) rowFileRefs.current.set(g.project_key, el); }}
+                      type="file" multiple accept={ACCEPTED} style={{ display: "none" }}
+                      onChange={e => { uploadFiles(e.target.files, g.project_key); (e.target as HTMLInputElement).value = ""; }}
+                    />
+                  </div>
+                </div>
+
+                {/* Expanded file rows */}
+                {isOpen && (
+                  <div style={{ background: "rgba(255,255,255,0.5)", borderTop: "1px solid rgba(201,168,76,0.12)" }}>
+
+                    {/* File sub-header */}
+                    <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 100px 150px 80px", padding: "8px 20px 6px", borderBottom: "1px solid rgba(201,168,76,0.1)" }}>
+                      {["", "File name", "Size", "Added", ""].map((h, i) => (
+                        <span key={i} style={{ fontFamily: "var(--font-heading)", fontSize: 8.5, letterSpacing: "0.2em", color: "var(--ghost-muted)", textTransform: "uppercase", fontWeight: 600 }}>{h}</span>
+                      ))}
+                    </div>
+
+                    {g.files.map((f, fi) => (
+                      <div key={f.id} style={{
+                        display: "grid", gridTemplateColumns: "32px 1fr 100px 150px 80px",
+                        padding: "10px 20px", alignItems: "center",
+                        borderBottom: fi < g.files.length - 1 ? "1px solid rgba(201,168,76,0.08)" : "none",
+                        transition: "background 0.12s",
+                      }}
+                        onMouseEnter={e => e.currentTarget.style.background = "rgba(201,168,76,0.04)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+
+                        {/* File icon */}
+                        <div style={{ display: "flex", justifyContent: "center" }}>
+                          <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="var(--gold-700)" strokeWidth={1.8}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                          </svg>
+                        </div>
+
+                        {/* File name */}
+                        <span style={{ fontFamily: "var(--font-body)", fontSize: 13.5, fontWeight: 500, color: "var(--ghost-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 12 }}>
+                          {f.name}
+                        </span>
+
+                        {/* Size */}
+                        <span style={{ fontFamily: "var(--font-body)", fontSize: 12.5, color: "var(--ghost-muted)", fontWeight: 500 }}>
+                          {fmtSize(f.size_bytes)}
+                        </span>
+
+                        {/* Date */}
+                        <span style={{ fontFamily: "var(--font-body)", fontSize: 12.5, color: "var(--ghost-muted)", fontWeight: 500 }}>
+                          {fmtDate(f.created_at)}
+                        </span>
+
+                        {/* Remove */}
+                        <button onClick={() => deleteFile(f.id)} disabled={deleting === f.id}
+                          style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ghost-muted)", background: "none", border: "none", cursor: "pointer", fontFamily: "var(--font-body)", transition: "color 0.15s", textAlign: "left" }}
+                          onMouseEnter={e => e.currentTarget.style.color = "#b83030"}
+                          onMouseLeave={e => e.currentTarget.style.color = "var(--ghost-muted)"}>
+                          {deleting === f.id ? "…" : "Remove"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

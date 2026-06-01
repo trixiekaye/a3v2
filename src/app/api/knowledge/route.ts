@@ -3,16 +3,20 @@ import { db } from "@/lib/supabase";
 
 export async function GET(request: NextRequest) {
   const projectKey = request.nextUrl.searchParams.get("project");
+
   if (!projectKey) {
-    // Return all distinct project keys
-    const { data } = await db()
+    // Return all files with metadata (no content) — used by the table view
+    const { data, error } = await db()
       .from("knowledge_files")
-      .select("project_key")
-      .order("project_key");
-    const keys = [...new Set((data ?? []).map((r: { project_key: string }) => r.project_key))];
-    return NextResponse.json(keys);
+      .select("id, project_key, name, size_bytes, created_at")
+      .order("project_key", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(data ?? []);
   }
 
+  // Return files for a specific project (chat uses this)
   const { data, error } = await db()
     .from("knowledge_files")
     .select("id, project_key, name, size_bytes, created_at")
