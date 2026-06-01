@@ -8,9 +8,8 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai
 
 /** Text cascade: tried in order until one succeeds */
 const GEMINI_CASCADE = [
-  { id: "gemini-2.5-pro",   label: "Gemini 2.5 Pro"   },
-  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash"  },
-  { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash"  },
+  { id: "gemini-2.5-pro",   label: "Gemini 2.5 Pro"  },
+  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
 ];
 
 /** Final text fallback when all Gemini models are exhausted */
@@ -26,10 +25,12 @@ function hasImages(messages: { role: string; content: MessageContent }[]): boole
   return messages.some(m => Array.isArray(m.content) && m.content.some(b => b.type === "image_url"));
 }
 
-function isExhausted(status: number, body: string): boolean {
+function shouldFallback(status: number, body: string): boolean {
   return (
     status === 429 ||
+    status === 404 ||                          // model not available on this endpoint
     body.includes("RESOURCE_EXHAUSTED") ||
+    body.includes("NOT_FOUND") ||
     body.includes("quota") ||
     body.toUpperCase().includes("RATE_LIMIT")
   );
@@ -60,7 +61,7 @@ async function tryGemini(
   });
 
   const body = await res.text();
-  if (isExhausted(res.status, body)) throw new ExhaustedError(modelId);
+  if (shouldFallback(res.status, body)) throw new ExhaustedError(modelId);
   if (!res.ok) throw new Error(`Gemini ${modelId} error ${res.status}: ${body}`);
 
   return JSON.parse(body).choices[0].message.content as string;
