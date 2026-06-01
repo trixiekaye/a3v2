@@ -64,27 +64,64 @@ function messageText(msg: Message): string {
   return msg.content.filter((b): b is TextBlock => b.type === "text").map(b => b.text).join("\n");
 }
 
+/** Strip A3 boilerplate client-side before copying */
+function cleanForCopy(text: string): string {
+  let clean = text;
+
+  // 1. Cut at the Rationale block — handles any amount of whitespace before ---
+  clean = clean.replace(/\n*-{3,}\s*\n+\**\s*Rationale\s*\**[\s\S]*/i, "");
+
+  // 2. Cut at "Please review this draft" (may appear on its own line)
+  clean = clean.replace(/\n*Please review this draft[\s\S]*/i, "");
+
+  // 3. Cut at "Ready to create this in Jira?" (may appear without the "Please review" prefix)
+  clean = clean.replace(/\n*Ready to create this in Jira\?[\s\S]*/i, "");
+
+  // 4. Remove markdown code fence markers (opening/closing ``` lines — keep the content inside)
+  clean = clean.replace(/^```[a-zA-Z0-9]*\s*$/gm, "");
+
+  // 5. Collapse 3+ blank lines into 2
+  clean = clean.replace(/\n{3,}/g, "\n\n");
+
+  return clean.trim();
+}
+
 /* ─── Jira Push Panel ───────────────────────────────────────────── */
 function JiraCreatePanel({ messageContent }: { messageContent: string }) {
-  const [open, setOpen]           = useState(false);
+  const [open, setOpen]             = useState(false);
   const [projectKey, setProjectKey] = useState("");
-  const [issueType, setIssueType] = useState("Story");
-  const [summary, setSummary]     = useState("");
-  const [busy, setBusy]           = useState(false);
-  const [result, setResult]       = useState<JiraResult>(null);
-  const [error, setError]         = useState("");
+  const [issueType, setIssueType]   = useState("Story");
+  const [summary, setSummary]       = useState("");
+  const [busy, setBusy]             = useState(false);
+  const [result, setResult]         = useState<JiraResult>(null);
+  const [error, setError]           = useState("");
+  const [copied, setCopied]         = useState(false);
+  const [jiraConnected, setJiraConnected] = useState<boolean | null>(null); // null = loading
 
   const detected = detectCard(messageContent);
-  if (!detected.isCard) return null;
+  const hasCard  = detected.isCard;
+
+  useEffect(() => {
+    fetch("/api/config/jira")
+      .then(r => r.json())
+      .then(d => setJiraConnected(!!d))
+      .catch(() => setJiraConnected(false));
+  }, []);
+
+  // Always show at minimum the Copy button for any non-empty AI message
+  if (!messageContent.trim()) return null;
+
+  function handleCopy() {
+    navigator.clipboard.writeText(cleanForCopy(messageContent)).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   function handleOpen() {
     if (!open) {
       setIssueType(detected.type);
       setSummary(detected.summary);
-      const stored = localStorage.getItem("a3_jira_config");
-      if (stored) {
-        try { setProjectKey(""); } catch {}
-      }
     }
     setOpen(o => !o);
     setResult(null);
@@ -106,7 +143,6 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Failed to create issue."); return; }
       setResult(data);
-      // Save to history DB
       fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -128,23 +164,60 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
 
   return (
     <div style={{ marginTop: 10, marginLeft: 44 }}>
-      {/* Trigger button */}
+
+      {/* ── Action row ─────────────────────────────────────────── */}
       {!result && (
-        <button onClick={handleOpen}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            padding: "5px 14px", borderRadius: 20,
-            background: open ? "rgba(201,168,76,0.12)" : "transparent",
-            border: "1px solid rgba(201,168,76,0.4)",
-            color: "var(--gold-700)", fontSize: 12, fontWeight: 600,
-            fontFamily: "var(--font-heading)", letterSpacing: "0.1em",
-            cursor: "pointer", transition: "all 0.15s",
-          }}
-          onMouseEnter={e => { if (!open) { e.currentTarget.style.background = "rgba(201,168,76,0.09)"; e.currentTarget.style.borderColor = "rgba(201,168,76,0.6)"; } }}
-          onMouseLeave={e => { if (!open) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "rgba(201,168,76,0.4)"; } }}>
-          <span style={{ fontSize: 10 }}>◆</span>
-          {open ? "CANCEL" : "PUSH TO JIRA"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+
+          {/* Copy button — always visible */}
+          <button onClick={handleCopy}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "5px 14px", borderRadius: 20,
+              background: copied ? "rgba(201,168,76,0.14)" : "transparent",
+              border: `1px solid ${copied ? "rgba(201,168,76,0.5)" : "var(--ghost-border-strong)"}`,
+              color: copied ? "var(--gold-700)" : "var(--ghost-secondary)",
+              fontSize: 12, fontWeight: 600,
+              fontFamily: "var(--font-heading)", letterSpacing: "0.08em",
+              cursor: "pointer", transition: "all 0.15s",
+            }}
+            onMouseEnter={e => { if (!copied) { e.currentTarget.style.borderColor = "rgba(201,168,76,0.4)"; e.currentTarget.style.color = "var(--gold-700)"; } }}
+            onMouseLeave={e => { if (!copied) { e.currentTarget.style.borderColor = "var(--ghost-border-strong)"; e.currentTarget.style.color = "var(--ghost-secondary)"; } }}>
+            {copied
+              ? <><span style={{ fontSize: 10 }}>✓</span> COPIED</>
+              : <><svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> COPY CARD</>
+            }
+          </button>
+
+          {/* Push to Jira — only when a structured card is detected AND Jira is connected */}
+          {hasCard && jiraConnected && (
+            <button onClick={handleOpen}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "5px 14px", borderRadius: 20,
+                background: open ? "rgba(201,168,76,0.12)" : "transparent",
+                border: "1px solid rgba(201,168,76,0.4)",
+                color: "var(--gold-700)", fontSize: 12, fontWeight: 600,
+                fontFamily: "var(--font-heading)", letterSpacing: "0.1em",
+                cursor: "pointer", transition: "all 0.15s",
+              }}
+              onMouseEnter={e => { if (!open) { e.currentTarget.style.background = "rgba(201,168,76,0.09)"; e.currentTarget.style.borderColor = "rgba(201,168,76,0.6)"; } }}
+              onMouseLeave={e => { if (!open) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "rgba(201,168,76,0.4)"; } }}>
+              <span style={{ fontSize: 10 }}>◆</span>
+              {open ? "CANCEL" : "PUSH TO JIRA"}
+            </button>
+          )}
+
+          {/* Not connected nudge — only when a card is present */}
+          {hasCard && jiraConnected === false && (
+            <a href="/dashboard/connect"
+              style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--gold-700)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--ghost-muted)")}>
+              Connect Jira to push ↗
+            </a>
+          )}
+        </div>
       )}
 
       {/* Success state */}
@@ -158,11 +231,17 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
             onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>
             {result.key} ↗
           </a>
+          <button onClick={handleCopy} title="Copy card"
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--ghost-muted)", fontSize: 11, fontFamily: "var(--font-body)", transition: "color 0.15s" }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--gold-700)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--ghost-muted)")}>
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
         </div>
       )}
 
-      {/* Expanded form */}
-      {open && !result && (
+      {/* Expanded Jira form — only for structured cards */}
+      {hasCard && open && !result && (
         <div style={{
           marginTop: 10, padding: "16px 18px",
           background: "linear-gradient(135deg, rgba(201,168,76,0.07) 0%, rgba(255,255,255,0.85) 44%)",
@@ -174,7 +253,6 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
             ◈ Create in Jira
           </p>
 
-          {/* Row 1: Project Key + Issue Type */}
           <div style={{ display: "flex", gap: 10 }}>
             <div style={{ flex: "0 0 120px" }}>
               <label style={{ display: "block", fontSize: 11.5, fontWeight: 600, color: "var(--ghost-secondary)", marginBottom: 5, fontFamily: "var(--font-body)" }}>Project Key</label>
@@ -195,7 +273,6 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
             </div>
           </div>
 
-          {/* Row 2: Summary */}
           <div>
             <label style={{ display: "block", fontSize: 11.5, fontWeight: 600, color: "var(--ghost-secondary)", marginBottom: 5, fontFamily: "var(--font-body)" }}>Summary</label>
             <input
@@ -308,11 +385,12 @@ function MessageBubble({ message }: { message: Message }) {
 }
 
 /* ─── Input box ─────────────────────────────────────────────────── */
-function InputBox({ input, setInput, attachments, setAttachments, onSend, loading, fileInputRef }: {
+function InputBox({ input, setInput, attachments, setAttachments, onSend, loading, fileInputRef, activeModel }: {
   input: string; setInput: (v: string) => void;
   attachments: Attachment[]; setAttachments: (fn: (p: Attachment[]) => Attachment[]) => void;
   onSend: () => void; loading: boolean;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
+  activeModel: string;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -376,7 +454,7 @@ function InputBox({ input, setInput, attachments, setAttachments, onSend, loadin
         </button>
 
         <span style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", letterSpacing: "0.06em" }}>
-          {attachments.some(a => a.kind === "image") ? "A3 V2 · Groq · Vision" : "A3 V2 · Gemini 2.5 Pro"}
+          {attachments.some(a => a.kind === "image") ? "A3 V2 · Groq · Vision" : `A3 V2 · ${activeModel}`}
         </span>
 
         <button
@@ -409,9 +487,25 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [activeProject, setActiveProject] = useState("");
   const [kbFileCount, setKbFileCount] = useState(0);
+  const [projectKeys, setProjectKeys] = useState<string[]>([]);
+  const [activeModel, setActiveModel] = useState("Gemini 2.5 Pro");
+  const [modelFallback, setModelFallback] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasStarted = messages.length > 0;
+
+  // Load available project keys on mount
+  useEffect(() => {
+    fetch("/api/knowledge")
+      .then(r => r.json())
+      .then((files: { project_key: string }[]) => {
+        if (!Array.isArray(files)) return;
+        const keys = [...new Set(files.map(f => f.project_key))].sort();
+        setProjectKeys(keys);
+        if (keys.length === 1) setActiveProject(keys[0]); // auto-select if only one
+      })
+      .catch(() => {});
+  }, []);
 
   // Refresh KB file count when project changes
   useEffect(() => {
@@ -443,7 +537,19 @@ export default function ChatPage() {
     try {
       const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: newMessages, projectKey: activeProject.trim() || undefined }) });
       const data = await res.json();
-      if (!res.ok) { setMessages(prev => [...prev, { role: "assistant", content: `Error: ${data.error || "Something went wrong."}` }]); return; }
+      if (!res.ok) {
+        const errMsg = typeof data.error === "string" ? data.error : "Something went wrong. Please try again.";
+        setMessages(prev => [...prev, { role: "assistant", content: `⚠️ ${errMsg}` }]);
+        return;
+      }
+      // Track which model actually responded — show a notice if it fell back
+      if (data.model && data.model !== activeModel) {
+        setModelFallback(true);
+        setActiveModel(data.model);
+        setTimeout(() => setModelFallback(false), 5000);
+      } else if (data.model) {
+        setActiveModel(data.model);
+      }
       setMessages(prev => [...prev, { role: "assistant", content: data.content }]);
     } catch { setMessages(prev => [...prev, { role: "assistant", content: "Connection error. Please try again." }]); }
     finally { setLoading(false); }
@@ -460,6 +566,16 @@ export default function ChatPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--ghost-bg)" }}>
+
+      {/* Model fallback notice */}
+      {modelFallback && (
+        <div style={{ flexShrink: 0, padding: "8px 28px" }}>
+          <div style={{ maxWidth: 700, margin: "0 auto", display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 8, background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.28)", fontSize: 12.5, fontFamily: "var(--font-body)", fontWeight: 500, color: "var(--gold-700)" }}>
+            <span style={{ fontSize: 10 }}>⚡</span>
+            Quota reached — automatically switched to <strong style={{ marginLeft: 3 }}>{activeModel}</strong>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       {hasStarted && (
@@ -496,43 +612,57 @@ export default function ChatPage() {
           </p>
 
           <div style={{ width: "100%", maxWidth: 640 }}>
-            {/* Project context pill */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 18 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>Project context:</span>
-              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                <input
-                  value={activeProject}
-                  onChange={e => setActiveProject(e.target.value.toUpperCase())}
-                  placeholder="PROJ"
-                  style={{
-                    fontFamily: "monospace", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.06em",
-                    padding: "4px 10px", paddingRight: kbFileCount > 0 ? "56px" : "10px",
-                    borderRadius: 20, border: "1px solid rgba(201,168,76,0.35)",
-                    background: activeProject ? "rgba(201,168,76,0.1)" : "rgba(255,255,255,0.6)",
-                    color: activeProject ? "var(--gold-700)" : "var(--ghost-muted)",
-                    outline: "none", transition: "all 0.15s", width: 90,
-                  }}
-                />
-                {kbFileCount > 0 && (
-                  <span style={{
-                    position: "absolute", right: 8,
-                    fontSize: 10.5, fontWeight: 700, fontFamily: "var(--font-body)",
-                    color: "var(--gold-700)", background: "rgba(201,168,76,0.2)",
-                    border: "1px solid rgba(201,168,76,0.4)", borderRadius: 10,
-                    padding: "1px 6px", pointerEvents: "none",
-                  }}>
-                    {kbFileCount}
-                  </span>
-                )}
-              </div>
+            {/* Knowledge context dropdown */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 18 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", flexShrink: 0 }}>
+                Knowledge context:
+              </span>
+
+              {projectKeys.length === 0 ? (
+                <a href="/dashboard/knowledge"
+                  style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, border: "1px solid var(--ghost-border-strong)", background: "rgba(255,255,255,0.5)", transition: "all 0.15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(201,168,76,0.4)"; e.currentTarget.style.color = "var(--gold-700)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--ghost-border-strong)"; e.currentTarget.style.color = "var(--ghost-muted)"; }}>
+                  <span style={{ fontSize: 9 }}>◈</span> No projects yet — add files ↗
+                </a>
+              ) : (
+                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                  <select
+                    value={activeProject}
+                    onChange={e => setActiveProject(e.target.value)}
+                    style={{
+                      fontFamily: "monospace", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.04em",
+                      padding: "5px 32px 5px 14px",
+                      borderRadius: 20,
+                      border: `1px solid ${activeProject ? "rgba(201,168,76,0.45)" : "rgba(201,168,76,0.28)"}`,
+                      background: activeProject ? "rgba(201,168,76,0.1)" : "rgba(255,255,255,0.65)",
+                      color: activeProject ? "var(--gold-700)" : "var(--ghost-secondary)",
+                      outline: "none", cursor: "pointer",
+                      appearance: "none", WebkitAppearance: "none",
+                      transition: "all 0.15s",
+                    }}>
+                    <option value="">— Select project —</option>
+                    {projectKeys.map(k => (
+                      <option key={k} value={k}>{k}</option>
+                    ))}
+                  </select>
+                  {/* Chevron icon */}
+                  <svg style={{ position: "absolute", right: 10, pointerEvents: "none", color: activeProject ? "var(--gold-700)" : "var(--ghost-muted)" }} width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </div>
+              )}
+
+              {/* File count badge */}
               {kbFileCount > 0 && (
-                <span style={{ fontSize: 11.5, fontWeight: 500, color: "var(--gold-700)", fontFamily: "var(--font-body)" }}>
-                  ◆ {kbFileCount} file{kbFileCount !== 1 ? "s" : ""} loaded
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--gold-700)", fontFamily: "var(--font-body)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold-500)", display: "inline-block" }} />
+                  {kbFileCount} file{kbFileCount !== 1 ? "s" : ""} loaded
                 </span>
               )}
             </div>
 
-            <InputBox input={input} setInput={setInput} attachments={attachments} setAttachments={setAttachments} onSend={sendMessage} loading={loading} fileInputRef={fileInputRef} />
+            <InputBox input={input} setInput={setInput} attachments={attachments} setAttachments={setAttachments} onSend={sendMessage} loading={loading} fileInputRef={fileInputRef} activeModel={activeModel} />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 20 }}>
               {QUICK_ACTIONS.map(({ label, tag, badge }) => (
                 <button key={label} onClick={() => setInput(tag)}
@@ -552,7 +682,7 @@ export default function ChatPage() {
       {hasStarted && (
         <div style={{ padding: "12px 28px 24px", flexShrink: 0 }}>
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <InputBox input={input} setInput={setInput} attachments={attachments} setAttachments={setAttachments} onSend={sendMessage} loading={loading} fileInputRef={fileInputRef} />
+            <InputBox input={input} setInput={setInput} attachments={attachments} setAttachments={setAttachments} onSend={sendMessage} loading={loading} fileInputRef={fileInputRef} activeModel={activeModel} />
           </div>
         </div>
       )}
