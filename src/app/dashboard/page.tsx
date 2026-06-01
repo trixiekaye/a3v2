@@ -66,12 +66,24 @@ function messageText(msg: Message): string {
 
 /** Strip A3 boilerplate client-side before copying */
 function cleanForCopy(text: string): string {
-  return text
-    .replace(/please\s+review\s+this\s+draft\.?\s*ready\s+to\s+create\s+this\s+in\s+jira\?\s*\(yes\s*\/\s*revise\)/gi, "")
-    .replace(/ready\s+to\s+create\s+this\s+in\s+jira\?\s*\(yes\s*\/\s*revise\)/gi, "")
-    .replace(/\n?-{2,}\n?\*{0,2}Rationale\*{0,2}[\s\S]*/i, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  let clean = text;
+
+  // 1. Cut at the Rationale block — handles any amount of whitespace before ---
+  clean = clean.replace(/\n*-{3,}\s*\n+\**\s*Rationale\s*\**[\s\S]*/i, "");
+
+  // 2. Cut at "Please review this draft" (may appear on its own line)
+  clean = clean.replace(/\n*Please review this draft[\s\S]*/i, "");
+
+  // 3. Cut at "Ready to create this in Jira?" (may appear without the "Please review" prefix)
+  clean = clean.replace(/\n*Ready to create this in Jira\?[\s\S]*/i, "");
+
+  // 4. Remove markdown code fence markers (opening/closing ``` lines — keep the content inside)
+  clean = clean.replace(/^```[a-zA-Z0-9]*\s*$/gm, "");
+
+  // 5. Collapse 3+ blank lines into 2
+  clean = clean.replace(/\n{3,}/g, "\n\n");
+
+  return clean.trim();
 }
 
 /* ─── Jira Push Panel ───────────────────────────────────────────── */
