@@ -472,9 +472,23 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [activeProject, setActiveProject] = useState("");
   const [kbFileCount, setKbFileCount] = useState(0);
+  const [projectKeys, setProjectKeys] = useState<string[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasStarted = messages.length > 0;
+
+  // Load available project keys on mount
+  useEffect(() => {
+    fetch("/api/knowledge")
+      .then(r => r.json())
+      .then((files: { project_key: string }[]) => {
+        if (!Array.isArray(files)) return;
+        const keys = [...new Set(files.map(f => f.project_key))].sort();
+        setProjectKeys(keys);
+        if (keys.length === 1) setActiveProject(keys[0]); // auto-select if only one
+      })
+      .catch(() => {});
+  }, []);
 
   // Refresh KB file count when project changes
   useEffect(() => {
@@ -559,38 +573,52 @@ export default function ChatPage() {
           </p>
 
           <div style={{ width: "100%", maxWidth: 640 }}>
-            {/* Project context pill */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 18 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>Knowledge context:</span>
-              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                <input
-                  value={activeProject}
-                  onChange={e => setActiveProject(e.target.value.toUpperCase())}
-                  placeholder="PROJ"
-                  style={{
-                    fontFamily: "monospace", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.06em",
-                    padding: "4px 10px", paddingRight: kbFileCount > 0 ? "56px" : "10px",
-                    borderRadius: 20, border: "1px solid rgba(201,168,76,0.35)",
-                    background: activeProject ? "rgba(201,168,76,0.1)" : "rgba(255,255,255,0.6)",
-                    color: activeProject ? "var(--gold-700)" : "var(--ghost-muted)",
-                    outline: "none", transition: "all 0.15s", width: 90,
-                  }}
-                />
-                {kbFileCount > 0 && (
-                  <span style={{
-                    position: "absolute", right: 8,
-                    fontSize: 10.5, fontWeight: 700, fontFamily: "var(--font-body)",
-                    color: "var(--gold-700)", background: "rgba(201,168,76,0.2)",
-                    border: "1px solid rgba(201,168,76,0.4)", borderRadius: 10,
-                    padding: "1px 6px", pointerEvents: "none",
-                  }}>
-                    {kbFileCount}
-                  </span>
-                )}
-              </div>
+            {/* Knowledge context dropdown */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 18 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", flexShrink: 0 }}>
+                Knowledge context:
+              </span>
+
+              {projectKeys.length === 0 ? (
+                <a href="/dashboard/knowledge"
+                  style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 20, border: "1px solid var(--ghost-border-strong)", background: "rgba(255,255,255,0.5)", transition: "all 0.15s" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(201,168,76,0.4)"; e.currentTarget.style.color = "var(--gold-700)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--ghost-border-strong)"; e.currentTarget.style.color = "var(--ghost-muted)"; }}>
+                  <span style={{ fontSize: 9 }}>◈</span> No projects yet — add files ↗
+                </a>
+              ) : (
+                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                  <select
+                    value={activeProject}
+                    onChange={e => setActiveProject(e.target.value)}
+                    style={{
+                      fontFamily: "monospace", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.04em",
+                      padding: "5px 32px 5px 14px",
+                      borderRadius: 20,
+                      border: `1px solid ${activeProject ? "rgba(201,168,76,0.45)" : "rgba(201,168,76,0.28)"}`,
+                      background: activeProject ? "rgba(201,168,76,0.1)" : "rgba(255,255,255,0.65)",
+                      color: activeProject ? "var(--gold-700)" : "var(--ghost-secondary)",
+                      outline: "none", cursor: "pointer",
+                      appearance: "none", WebkitAppearance: "none",
+                      transition: "all 0.15s",
+                    }}>
+                    <option value="">— Select project —</option>
+                    {projectKeys.map(k => (
+                      <option key={k} value={k}>{k}</option>
+                    ))}
+                  </select>
+                  {/* Chevron icon */}
+                  <svg style={{ position: "absolute", right: 10, pointerEvents: "none", color: activeProject ? "var(--gold-700)" : "var(--ghost-muted)" }} width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </div>
+              )}
+
+              {/* File count badge */}
               {kbFileCount > 0 && (
-                <span style={{ fontSize: 11.5, fontWeight: 500, color: "var(--gold-700)", fontFamily: "var(--font-body)" }}>
-                  ◆ {kbFileCount} file{kbFileCount !== 1 ? "s" : ""} loaded
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--gold-700)", fontFamily: "var(--font-body)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold-500)", display: "inline-block" }} />
+                  {kbFileCount} file{kbFileCount !== 1 ? "s" : ""} loaded
                 </span>
               )}
             </div>
