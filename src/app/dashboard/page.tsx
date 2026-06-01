@@ -64,27 +64,50 @@ function messageText(msg: Message): string {
   return msg.content.filter((b): b is TextBlock => b.type === "text").map(b => b.text).join("\n");
 }
 
+/** Strip A3 boilerplate client-side before copying */
+function cleanForCopy(text: string): string {
+  return text
+    .replace(/please\s+review\s+this\s+draft\.?\s*ready\s+to\s+create\s+this\s+in\s+jira\?\s*\(yes\s*\/\s*revise\)/gi, "")
+    .replace(/ready\s+to\s+create\s+this\s+in\s+jira\?\s*\(yes\s*\/\s*revise\)/gi, "")
+    .replace(/\n?-{2,}\n?\*{0,2}Rationale\*{0,2}[\s\S]*/i, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /* ─── Jira Push Panel ───────────────────────────────────────────── */
 function JiraCreatePanel({ messageContent }: { messageContent: string }) {
-  const [open, setOpen]           = useState(false);
+  const [open, setOpen]             = useState(false);
   const [projectKey, setProjectKey] = useState("");
-  const [issueType, setIssueType] = useState("Story");
-  const [summary, setSummary]     = useState("");
-  const [busy, setBusy]           = useState(false);
-  const [result, setResult]       = useState<JiraResult>(null);
-  const [error, setError]         = useState("");
+  const [issueType, setIssueType]   = useState("Story");
+  const [summary, setSummary]       = useState("");
+  const [busy, setBusy]             = useState(false);
+  const [result, setResult]         = useState<JiraResult>(null);
+  const [error, setError]           = useState("");
+  const [copied, setCopied]         = useState(false);
+  const [jiraConnected, setJiraConnected] = useState<boolean | null>(null); // null = loading
 
   const detected = detectCard(messageContent);
+
+  useEffect(() => {
+    fetch("/api/config/jira")
+      .then(r => r.json())
+      .then(d => setJiraConnected(!!d))
+      .catch(() => setJiraConnected(false));
+  }, []);
+
   if (!detected.isCard) return null;
+
+  function handleCopy() {
+    navigator.clipboard.writeText(cleanForCopy(messageContent)).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   function handleOpen() {
     if (!open) {
       setIssueType(detected.type);
       setSummary(detected.summary);
-      const stored = localStorage.getItem("a3_jira_config");
-      if (stored) {
-        try { setProjectKey(""); } catch {}
-      }
     }
     setOpen(o => !o);
     setResult(null);
@@ -106,7 +129,6 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Failed to create issue."); return; }
       setResult(data);
-      // Save to history DB
       fetch("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -128,23 +150,60 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
 
   return (
     <div style={{ marginTop: 10, marginLeft: 44 }}>
-      {/* Trigger button */}
+
+      {/* ── Action row ─────────────────────────────────────────── */}
       {!result && (
-        <button onClick={handleOpen}
-          style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            padding: "5px 14px", borderRadius: 20,
-            background: open ? "rgba(201,168,76,0.12)" : "transparent",
-            border: "1px solid rgba(201,168,76,0.4)",
-            color: "var(--gold-700)", fontSize: 12, fontWeight: 600,
-            fontFamily: "var(--font-heading)", letterSpacing: "0.1em",
-            cursor: "pointer", transition: "all 0.15s",
-          }}
-          onMouseEnter={e => { if (!open) { e.currentTarget.style.background = "rgba(201,168,76,0.09)"; e.currentTarget.style.borderColor = "rgba(201,168,76,0.6)"; } }}
-          onMouseLeave={e => { if (!open) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "rgba(201,168,76,0.4)"; } }}>
-          <span style={{ fontSize: 10 }}>◆</span>
-          {open ? "CANCEL" : "PUSH TO JIRA"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+
+          {/* Copy button — always visible */}
+          <button onClick={handleCopy}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "5px 14px", borderRadius: 20,
+              background: copied ? "rgba(201,168,76,0.14)" : "transparent",
+              border: `1px solid ${copied ? "rgba(201,168,76,0.5)" : "var(--ghost-border-strong)"}`,
+              color: copied ? "var(--gold-700)" : "var(--ghost-secondary)",
+              fontSize: 12, fontWeight: 600,
+              fontFamily: "var(--font-heading)", letterSpacing: "0.08em",
+              cursor: "pointer", transition: "all 0.15s",
+            }}
+            onMouseEnter={e => { if (!copied) { e.currentTarget.style.borderColor = "rgba(201,168,76,0.4)"; e.currentTarget.style.color = "var(--gold-700)"; } }}
+            onMouseLeave={e => { if (!copied) { e.currentTarget.style.borderColor = "var(--ghost-border-strong)"; e.currentTarget.style.color = "var(--ghost-secondary)"; } }}>
+            {copied
+              ? <><span style={{ fontSize: 10 }}>✓</span> COPIED</>
+              : <><svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> COPY CARD</>
+            }
+          </button>
+
+          {/* Push to Jira — only if connected */}
+          {jiraConnected && (
+            <button onClick={handleOpen}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "5px 14px", borderRadius: 20,
+                background: open ? "rgba(201,168,76,0.12)" : "transparent",
+                border: "1px solid rgba(201,168,76,0.4)",
+                color: "var(--gold-700)", fontSize: 12, fontWeight: 600,
+                fontFamily: "var(--font-heading)", letterSpacing: "0.1em",
+                cursor: "pointer", transition: "all 0.15s",
+              }}
+              onMouseEnter={e => { if (!open) { e.currentTarget.style.background = "rgba(201,168,76,0.09)"; e.currentTarget.style.borderColor = "rgba(201,168,76,0.6)"; } }}
+              onMouseLeave={e => { if (!open) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "rgba(201,168,76,0.4)"; } }}>
+              <span style={{ fontSize: 10 }}>◆</span>
+              {open ? "CANCEL" : "PUSH TO JIRA"}
+            </button>
+          )}
+
+          {/* Not connected nudge */}
+          {jiraConnected === false && (
+            <a href="/dashboard/connect"
+              style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--gold-700)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--ghost-muted)")}>
+              Connect Jira to push ↗
+            </a>
+          )}
+        </div>
       )}
 
       {/* Success state */}
@@ -158,10 +217,16 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
             onMouseLeave={e => (e.currentTarget.style.textDecoration = "none")}>
             {result.key} ↗
           </a>
+          <button onClick={handleCopy} title="Copy card"
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--ghost-muted)", fontSize: 11, fontFamily: "var(--font-body)", transition: "color 0.15s" }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--gold-700)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--ghost-muted)")}>
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
         </div>
       )}
 
-      {/* Expanded form */}
+      {/* Expanded Jira form */}
       {open && !result && (
         <div style={{
           marginTop: 10, padding: "16px 18px",
@@ -174,7 +239,6 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
             ◈ Create in Jira
           </p>
 
-          {/* Row 1: Project Key + Issue Type */}
           <div style={{ display: "flex", gap: 10 }}>
             <div style={{ flex: "0 0 120px" }}>
               <label style={{ display: "block", fontSize: 11.5, fontWeight: 600, color: "var(--ghost-secondary)", marginBottom: 5, fontFamily: "var(--font-body)" }}>Project Key</label>
@@ -195,7 +259,6 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
             </div>
           </div>
 
-          {/* Row 2: Summary */}
           <div>
             <label style={{ display: "block", fontSize: 11.5, fontWeight: 600, color: "var(--ghost-secondary)", marginBottom: 5, fontFamily: "var(--font-body)" }}>Summary</label>
             <input
