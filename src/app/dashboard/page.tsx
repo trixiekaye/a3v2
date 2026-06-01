@@ -561,7 +561,7 @@ export default function ChatPage() {
           <div style={{ width: "100%", maxWidth: 640 }}>
             {/* Project context pill */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 18 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>Project context:</span>
+              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>Knowledge context:</span>
               <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
                 <input
                   value={activeProject}
