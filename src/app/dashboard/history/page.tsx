@@ -5,10 +5,10 @@ import { useEffect, useState } from "react";
 type CardRecord = { id: string; type: "Story"|"Task"|"Bug"|"Epic"; summary: string; project: string; jiraKey?: string; createdAt: string };
 
 const BADGE: Record<string, { color: string; bg: string; border: string }> = {
-  Story: { color: "var(--navy-200)",  bg: "rgba(58,84,153,0.2)",   border: "rgba(58,84,153,0.4)"   },
-  Task:  { color: "var(--gold-300)",  bg: "rgba(201,168,76,0.12)", border: "rgba(201,168,76,0.3)"  },
-  Bug:   { color: "#e8a0a0",          bg: "rgba(200,80,80,0.1)",   border: "rgba(200,80,80,0.25)"  },
-  Epic:  { color: "var(--gold-400)",  bg: "rgba(201,168,76,0.18)", border: "rgba(201,168,76,0.38)" },
+  Story: { color: "var(--navy-400)",  bg: "rgba(58,84,153,0.12)",  border: "rgba(58,84,153,0.3)"   },
+  Task:  { color: "var(--gold-700)",  bg: "rgba(201,168,76,0.14)", border: "rgba(201,168,76,0.35)" },
+  Bug:   { color: "#b83030",          bg: "rgba(200,80,80,0.1)",   border: "rgba(200,80,80,0.28)"  },
+  Epic:  { color: "var(--gold-500)",  bg: "rgba(201,168,76,0.2)",  border: "rgba(201,168,76,0.45)" },
 };
 
 const DEMO: CardRecord[] = [
@@ -27,41 +27,68 @@ function timeAgo(iso: string) {
 
 export default function HistoryPage() {
   const [records, setRecords] = useState<CardRecord[]>([]);
-  useEffect(() => { const s = localStorage.getItem("a3_history"); setRecords(s ? JSON.parse(s) : DEMO); }, []);
+  useEffect(() => {
+    fetch("/api/history")
+      .then(r => r.json())
+      .then(d => setRecords(Array.isArray(d) && d.length > 0
+        ? d.map((r: { id: string; type: string; summary: string; project_key: string; jira_key?: string; created_at: string }) => ({
+            id: r.id, type: r.type as CardRecord["type"],
+            summary: r.summary, project: r.project_key,
+            jiraKey: r.jira_key, createdAt: r.created_at,
+          }))
+        : DEMO
+      ));
+  }, []);
 
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "32px 32px", maxWidth: 720 }}>
+    <div style={{ height: "100%", overflowY: "auto", padding: "36px 36px", maxWidth: 760 }}>
 
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontFamily: "var(--font-heading)", fontSize: 16, fontWeight: 600, color: "var(--gold-400)", letterSpacing: "0.12em" }}>History</h1>
-        <div style={{ marginTop: 6, height: 1, width: 48, background: "linear-gradient(90deg, var(--gold-700), transparent)" }} />
-        <p style={{ fontSize: 13, color: "var(--navy-400)", marginTop: 8, fontFamily: "var(--font-body)" }}>Previously generated Jira work items</p>
+      <div style={{ marginBottom: 32 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <span style={{ color: "var(--gold-500)", fontSize: 11 }}>◆</span>
+          <h1 style={{ fontFamily: "var(--font-heading)", fontSize: 19, fontWeight: 700, color: "var(--gold-500)", letterSpacing: "0.14em" }}>History</h1>
+        </div>
+        <div style={{ height: 1, width: 80, background: "linear-gradient(90deg, var(--gold-500), rgba(201,168,76,0.2), transparent)" }} />
+        <p style={{ fontSize: 13.5, color: "var(--ghost-secondary)", marginTop: 10, fontFamily: "var(--font-body)", fontWeight: 500 }}>Previously generated Jira work items</p>
       </div>
 
       {records.length === 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 80, gap: 10, color: "var(--navy-400)" }}>
-          <span style={{ fontSize: 24 }}>◆</span>
-          <p style={{ fontFamily: "var(--font-body)", fontSize: 14 }}>No cards yet</p>
-          <p style={{ fontFamily: "var(--font-body)", fontSize: 12, color: "var(--navy-600)" }}>Cards you create in chat will appear here</p>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 80, gap: 12, color: "var(--ghost-secondary)" }}>
+          <span style={{ fontSize: 28, color: "var(--gold-400)", opacity: 0.5 }}>◆</span>
+          <p style={{ fontFamily: "var(--font-body)", fontSize: 15, fontWeight: 500 }}>No cards yet</p>
+          <p style={{ fontFamily: "var(--font-body)", fontSize: 13, color: "var(--ghost-muted)", fontWeight: 500 }}>Cards you create in chat will appear here</p>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {records.map(r => {
             const b = BADGE[r.type] || BADGE.Task;
             return (
               <div key={r.id}
-                style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", background: "rgba(22,37,80,0.4)", border: "1px solid rgba(58,84,153,0.25)", borderRadius: 8, transition: "border-color 0.15s" }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(201,168,76,0.3)")}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = "rgba(58,84,153,0.25)")}
+                style={{
+                  display: "flex", alignItems: "center", gap: 14,
+                  padding: "14px 18px",
+                  background: "linear-gradient(135deg, rgba(201,168,76,0.06) 0%, rgba(255,255,255,0.82) 44%)",
+                  border: "1px solid rgba(201,168,76,0.25)",
+                  borderLeft: "3px solid var(--gold-500)",
+                  borderRadius: 8,
+                  transition: "border-color 0.15s, box-shadow 0.15s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(201,168,76,0.5)"; e.currentTarget.style.borderLeftColor = "var(--gold-400)"; e.currentTarget.style.boxShadow = "0 2px 10px rgba(201,168,76,0.1)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(201,168,76,0.25)"; e.currentTarget.style.borderLeftColor = "var(--gold-500)"; e.currentTarget.style.boxShadow = "none"; }}
               >
-                <span style={{ fontFamily: "var(--font-heading)", fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", padding: "3px 9px", borderRadius: 4, background: b.bg, color: b.color, border: `1px solid ${b.border}`, flexShrink: 0, textTransform: "uppercase" as const }}>
+                <span style={{
+                  fontFamily: "var(--font-heading)", fontSize: 10.5, fontWeight: 700,
+                  letterSpacing: "0.12em", padding: "4px 10px", borderRadius: 4,
+                  background: b.bg, color: b.color, border: `1px solid ${b.border}`,
+                  flexShrink: 0, textTransform: "uppercase" as const,
+                }}>
                   {r.type}
                 </span>
-                <span style={{ flex: 1, fontFamily: "var(--font-body)", fontSize: 13.5, color: "var(--navy-200)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.summary}</span>
+                <span style={{ flex: 1, fontFamily: "var(--font-body)", fontSize: 14, fontWeight: 500, color: "var(--ghost-text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.summary}</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-                  <span style={{ fontFamily: "monospace", fontSize: 11.5, color: "var(--navy-400)", background: "rgba(6,14,34,0.6)", padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(58,84,153,0.25)" }}>{r.project}</span>
-                  {r.jiraKey && <span style={{ fontSize: 12, color: "var(--gold-500)", fontFamily: "var(--font-body)" }}>{r.jiraKey}</span>}
-                  <span style={{ fontSize: 11.5, color: "var(--navy-600)", fontFamily: "var(--font-body)" }}>{timeAgo(r.createdAt)}</span>
+                  <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 600, color: "var(--navy-200)", background: "var(--navy-800)", padding: "2px 8px", borderRadius: 4, border: "1px solid rgba(58,84,153,0.4)", letterSpacing: "0.04em" }}>{r.project}</span>
+                  {r.jiraKey && <span style={{ fontSize: 13, fontWeight: 600, color: "var(--gold-700)", fontFamily: "var(--font-body)" }}>{r.jiraKey}</span>}
+                  <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>{timeAgo(r.createdAt)}</span>
                 </div>
               </div>
             );

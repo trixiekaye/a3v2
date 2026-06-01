@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.106.2",
     "@types/js-cookie": "^3.0.6",
     "groq-sdk": "^1.2.0",
     "js-cookie": "^3.0.7",
