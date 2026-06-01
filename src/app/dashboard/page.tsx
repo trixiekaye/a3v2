@@ -99,6 +99,7 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
   const [jiraConnected, setJiraConnected] = useState<boolean | null>(null); // null = loading
 
   const detected = detectCard(messageContent);
+  const hasCard  = detected.isCard;
 
   useEffect(() => {
     fetch("/api/config/jira")
@@ -107,7 +108,8 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
       .catch(() => setJiraConnected(false));
   }, []);
 
-  if (!detected.isCard) return null;
+  // Always show at minimum the Copy button for any non-empty AI message
+  if (!messageContent.trim()) return null;
 
   function handleCopy() {
     navigator.clipboard.writeText(cleanForCopy(messageContent)).then(() => {
@@ -187,8 +189,8 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
             }
           </button>
 
-          {/* Push to Jira — only if connected */}
-          {jiraConnected && (
+          {/* Push to Jira — only when a structured card is detected AND Jira is connected */}
+          {hasCard && jiraConnected && (
             <button onClick={handleOpen}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 6,
@@ -206,8 +208,8 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
             </button>
           )}
 
-          {/* Not connected nudge */}
-          {jiraConnected === false && (
+          {/* Not connected nudge — only when a card is present */}
+          {hasCard && jiraConnected === false && (
             <a href="/dashboard/connect"
               style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
               onMouseEnter={e => (e.currentTarget.style.color = "var(--gold-700)")}
@@ -238,8 +240,8 @@ function JiraCreatePanel({ messageContent }: { messageContent: string }) {
         </div>
       )}
 
-      {/* Expanded Jira form */}
-      {open && !result && (
+      {/* Expanded Jira form — only for structured cards */}
+      {hasCard && open && !result && (
         <div style={{
           marginTop: 10, padding: "16px 18px",
           background: "linear-gradient(135deg, rgba(201,168,76,0.07) 0%, rgba(255,255,255,0.85) 44%)",
