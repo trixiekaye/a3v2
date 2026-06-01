@@ -535,7 +535,11 @@ export default function ChatPage() {
     try {
       const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: newMessages, projectKey: activeProject.trim() || undefined }) });
       const data = await res.json();
-      if (!res.ok) { setMessages(prev => [...prev, { role: "assistant", content: `Error: ${data.error || "Something went wrong."}` }]); return; }
+      if (!res.ok) {
+        const errMsg = typeof data.error === "string" ? data.error : "Something went wrong. Please try again.";
+        setMessages(prev => [...prev, { role: "assistant", content: `⚠️ ${errMsg}` }]);
+        return;
+      }
       // Track which model actually responded — show a notice if it fell back
       if (data.model && data.model !== activeModel) {
         setModelFallback(true);

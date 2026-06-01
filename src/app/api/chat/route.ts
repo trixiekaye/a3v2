@@ -28,12 +28,27 @@ function hasImages(messages: { role: string; content: MessageContent }[]): boole
 function shouldFallback(status: number, body: string): boolean {
   return (
     status === 429 ||
-    status === 404 ||                          // model not available on this endpoint
+    status === 404 ||
     body.includes("RESOURCE_EXHAUSTED") ||
     body.includes("NOT_FOUND") ||
     body.includes("quota") ||
     body.toUpperCase().includes("RATE_LIMIT")
   );
+}
+
+function isContextTooLong(status: number, body: string): boolean {
+  return (
+    status === 400 &&
+    (body.includes("reduce the length") ||
+     body.includes("context_length") ||
+     body.includes("maximum context") ||
+     body.includes("too long"))
+  );
+}
+
+/** Keep only the most recent messages to fit within context limits */
+function trimToLimit(messages: object[], limit: number): object[] {
+  return messages.length > limit ? messages.slice(-limit) : messages;
 }
 
 function buildSystem(knowledgeBase?: string): string {
@@ -56,7 +71,7 @@ async function tryGemini(
     body: JSON.stringify({
       model: modelId,
       max_tokens: 4096,
-      messages: [{ role: "system", content: systemContent }, ...messages],
+      messages: [{ role: "system", content: systemContent }, ...trimToLimit(messages, 40)],
     }),
   });
 
@@ -77,15 +92,29 @@ async function callGroq(
   if (!apiKey) throw new Error("GROQ_API_KEY is not configured.");
 
   const groq = new Groq({ apiKey });
-  const completion = await groq.chat.completions.create({
-    model: modelId,
-    max_tokens: 4096,
-    messages: [
-      { role: "system", content: systemContent },
-      ...messages,
-    ] as Parameters<typeof groq.chat.completions.create>[0]["messages"],
-  });
-  return completion.choices[0].message.content as string;
+
+  // Retry with progressively fewer messages if context window is exceeded
+  for (const limit of [messages.length, 20, 10, 5]) {
+    const trimmed = trimToLimit(messages, limit);
+    try {
+      const completion = await groq.chat.completions.create({
+        model: modelId,
+        max_tokens: 4096,
+        messages: [
+          { role: "system", content: systemContent },
+          ...trimmed,
+        ] as Parameters<typeof groq.chat.completions.create>[0]["messages"],
+      });
+      return completion.choices[0].message.content as string;
+    } catch (err: unknown) {
+      const e = err as { status?: number; message?: string; error?: { message?: string } };
+      const status  = e?.status ?? 0;
+      const body    = e?.error?.message ?? e?.message ?? "";
+      if (isContextTooLong(status, body) && limit > 5) continue; // retry with fewer
+      throw err;
+    }
+  }
+  throw new Error("Conversation is too long. Please start a new chat.");
 }
 
 /** Sentinel error — not a real failure, just signals quota hit */
