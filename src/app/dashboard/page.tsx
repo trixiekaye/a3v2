@@ -383,11 +383,12 @@ function MessageBubble({ message }: { message: Message }) {
 }
 
 /* ─── Input box ─────────────────────────────────────────────────── */
-function InputBox({ input, setInput, attachments, setAttachments, onSend, loading, fileInputRef }: {
+function InputBox({ input, setInput, attachments, setAttachments, onSend, loading, fileInputRef, activeModel }: {
   input: string; setInput: (v: string) => void;
   attachments: Attachment[]; setAttachments: (fn: (p: Attachment[]) => Attachment[]) => void;
   onSend: () => void; loading: boolean;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
+  activeModel: string;
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -451,7 +452,7 @@ function InputBox({ input, setInput, attachments, setAttachments, onSend, loadin
         </button>
 
         <span style={{ flex: 1, textAlign: "center", fontSize: 11, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", letterSpacing: "0.06em" }}>
-          {attachments.some(a => a.kind === "image") ? "A3 V2 · Groq · Vision" : "A3 V2 · Gemini 2.5 Pro"}
+          {attachments.some(a => a.kind === "image") ? "A3 V2 · Groq · Vision" : `A3 V2 · ${activeModel}`}
         </span>
 
         <button
@@ -485,6 +486,8 @@ export default function ChatPage() {
   const [activeProject, setActiveProject] = useState("");
   const [kbFileCount, setKbFileCount] = useState(0);
   const [projectKeys, setProjectKeys] = useState<string[]>([]);
+  const [activeModel, setActiveModel] = useState("Gemini 2.5 Pro");
+  const [modelFallback, setModelFallback] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasStarted = messages.length > 0;
@@ -533,6 +536,14 @@ export default function ChatPage() {
       const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: newMessages, projectKey: activeProject.trim() || undefined }) });
       const data = await res.json();
       if (!res.ok) { setMessages(prev => [...prev, { role: "assistant", content: `Error: ${data.error || "Something went wrong."}` }]); return; }
+      // Track which model actually responded — show a notice if it fell back
+      if (data.model && data.model !== activeModel) {
+        setModelFallback(true);
+        setActiveModel(data.model);
+        setTimeout(() => setModelFallback(false), 5000);
+      } else if (data.model) {
+        setActiveModel(data.model);
+      }
       setMessages(prev => [...prev, { role: "assistant", content: data.content }]);
     } catch { setMessages(prev => [...prev, { role: "assistant", content: "Connection error. Please try again." }]); }
     finally { setLoading(false); }
@@ -549,6 +560,16 @@ export default function ChatPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--ghost-bg)" }}>
+
+      {/* Model fallback notice */}
+      {modelFallback && (
+        <div style={{ flexShrink: 0, padding: "8px 28px" }}>
+          <div style={{ maxWidth: 700, margin: "0 auto", display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 8, background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.28)", fontSize: 12.5, fontFamily: "var(--font-body)", fontWeight: 500, color: "var(--gold-700)" }}>
+            <span style={{ fontSize: 10 }}>⚡</span>
+            Quota reached — automatically switched to <strong style={{ marginLeft: 3 }}>{activeModel}</strong>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       {hasStarted && (
@@ -635,7 +656,7 @@ export default function ChatPage() {
               )}
             </div>
 
-            <InputBox input={input} setInput={setInput} attachments={attachments} setAttachments={setAttachments} onSend={sendMessage} loading={loading} fileInputRef={fileInputRef} />
+            <InputBox input={input} setInput={setInput} attachments={attachments} setAttachments={setAttachments} onSend={sendMessage} loading={loading} fileInputRef={fileInputRef} activeModel={activeModel} />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 20 }}>
               {QUICK_ACTIONS.map(({ label, tag, badge }) => (
                 <button key={label} onClick={() => setInput(tag)}
@@ -655,7 +676,7 @@ export default function ChatPage() {
       {hasStarted && (
         <div style={{ padding: "12px 28px 24px", flexShrink: 0 }}>
           <div style={{ maxWidth: 700, margin: "0 auto" }}>
-            <InputBox input={input} setInput={setInput} attachments={attachments} setAttachments={setAttachments} onSend={sendMessage} loading={loading} fileInputRef={fileInputRef} />
+            <InputBox input={input} setInput={setInput} attachments={attachments} setAttachments={setAttachments} onSend={sendMessage} loading={loading} fileInputRef={fileInputRef} activeModel={activeModel} />
           </div>
         </div>
       )}
