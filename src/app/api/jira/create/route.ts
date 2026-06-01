@@ -5,22 +5,19 @@ import { db } from "@/lib/supabase";
 function cleanDescription(raw: string): string {
   let text = raw;
 
-  // Remove "Please review this draft. Ready to create this in Jira? (yes / revise)"
-  text = text.replace(
-    /please\s+review\s+this\s+draft\.?\s*ready\s+to\s+create\s+this\s+in\s+jira\?\s*\(yes\s*\/\s*revise\)/gi,
-    ""
-  );
+  // Cut at the Rationale block (handles any amount of whitespace before ---)
+  text = text.replace(/\n*-{3,}\s*\n+\**\s*Rationale\s*\**[\s\S]*/i, "");
 
-  // Remove standalone "Ready to create this in Jira? (yes / revise)"
-  text = text.replace(
-    /ready\s+to\s+create\s+this\s+in\s+jira\?\s*\(yes\s*\/\s*revise\)/gi,
-    ""
-  );
+  // Cut at "Please review this draft" (may appear on its own line)
+  text = text.replace(/\n*Please review this draft[\s\S]*/i, "");
 
-  // Remove the entire Rationale block (--- **Rationale** … to end of string)
-  text = text.replace(/\n?-{2,}\n?\*{0,2}Rationale\*{0,2}[\s\S]*/i, "");
+  // Cut at "Ready to create this in Jira?"
+  text = text.replace(/\n*Ready to create this in Jira\?[\s\S]*/i, "");
 
-  // Collapse 3+ consecutive blank lines into 2
+  // Remove markdown code fence markers (keep content inside)
+  text = text.replace(/^```[a-zA-Z0-9]*\s*$/gm, "");
+
+  // Collapse 3+ blank lines into 2
   text = text.replace(/\n{3,}/g, "\n\n");
 
   return text.trim();
