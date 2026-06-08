@@ -127,6 +127,13 @@ export default function ProjectCollectionPage() {
   const router     = useRouter();
   const projectKey = (params.projectKey as string).toUpperCase();
 
+  // ── Display name ───────────────────────────────────────────────
+  const [displayName,    setDisplayName]    = useState("");
+  const [editingName,    setEditingName]    = useState(false);
+  const [nameInput,      setNameInput]      = useState("");
+  const [savingName,     setSavingName]     = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
   // ── Files ──────────────────────────────────────────────────────
   const [knowledgeFiles, setKnowledgeFiles] = useState<KBFile[]>([]);
   const [sowFiles,       setSowFiles]       = useState<KBFile[]>([]);
@@ -177,6 +184,7 @@ export default function ProjectCollectionPage() {
     loadFiles();
     loadChatHistory();
     checkJira();
+    loadDisplayName();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectKey]);
 
@@ -189,6 +197,27 @@ export default function ProjectCollectionPage() {
   }, [input]);
 
   // ── Data loaders ───────────────────────────────────────────────
+  async function loadDisplayName() {
+    const r = await fetch("/api/projects");
+    if (r.ok) {
+      const data: { project_key: string; display_name: string }[] = await r.json();
+      const match = data.find(p => p.project_key === projectKey);
+      if (match) setDisplayName(match.display_name ?? "");
+    }
+  }
+
+  async function saveDisplayName(val: string) {
+    setSavingName(true);
+    await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_key: projectKey, display_name: val.trim() }),
+    });
+    setDisplayName(val.trim());
+    setSavingName(false);
+    setEditingName(false);
+  }
+
   async function loadFiles() {
     const r = await fetch(`/api/knowledge?project=${projectKey}`);
     if (r.ok) {
@@ -522,8 +551,59 @@ export default function ProjectCollectionPage() {
         <div style={{ padding: "16px 20px 0" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
             <span style={{ color: "var(--gold-500)", fontSize: 9 }}>◆</span>
-            <span style={{ fontFamily: "var(--font-heading)", fontSize: 17, fontWeight: 700, color: "var(--gold-500)", letterSpacing: "0.12em" }}>{projectKey}</span>
+            <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--gold-700)", letterSpacing: "0.1em", background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.25)", borderRadius: 4, padding: "1px 7px" }}>{projectKey}</span>
           </div>
+
+          {/* Display name — inline edit */}
+          {editingName ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <input
+                ref={nameInputRef}
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") saveDisplayName(nameInput);
+                  if (e.key === "Escape") { setEditingName(false); setNameInput(displayName); }
+                }}
+                onBlur={() => saveDisplayName(nameInput)}
+                placeholder="Project display name…"
+                style={{
+                  flex: 1, fontSize: 15, fontWeight: 700,
+                  fontFamily: "var(--font-heading)", color: "var(--navy-800)",
+                  background: "rgba(255,255,255,0.9)",
+                  border: "1.5px solid var(--gold-500)",
+                  borderRadius: 6, padding: "4px 10px",
+                  outline: "none",
+                  boxShadow: "0 0 0 3px rgba(201,168,76,0.14)",
+                  letterSpacing: "0.06em",
+                }}
+                autoFocus
+              />
+              <button onClick={() => saveDisplayName(nameInput)} disabled={savingName}
+                style={{ fontSize: 12, color: "var(--gold-700)", background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 5, padding: "4px 10px", cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }}>
+                {savingName ? "…" : "✓"}
+              </button>
+            </div>
+          ) : (
+            <div
+              style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, cursor: "text", minHeight: 28 }}
+              onClick={() => { setEditingName(true); setNameInput(displayName); setTimeout(() => nameInputRef.current?.focus(), 50); }}
+            >
+              {displayName ? (
+                <span style={{ fontFamily: "var(--font-heading)", fontSize: 17, fontWeight: 700, color: "var(--navy-800)", letterSpacing: "0.08em", lineHeight: 1.2 }}>
+                  {displayName}
+                </span>
+              ) : (
+                <span style={{ fontFamily: "var(--font-body)", fontSize: 13, fontWeight: 500, color: "var(--ghost-muted)", fontStyle: "italic" }}>
+                  Add display name…
+                </span>
+              )}
+              <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="var(--ghost-muted)" strokeWidth={2} style={{ opacity: 0.5, flexShrink: 0 }}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+              </svg>
+            </div>
+          )}
+
           <div style={{ height: 1, width: 60, background: "linear-gradient(90deg, var(--gold-500), transparent)", marginBottom: 8 }} />
           <p style={{ fontSize: 12, color: "var(--ghost-muted)", fontWeight: 500 }}>
             {knowledgeFiles.length} knowledge · {sowFiles.length} SOW · {fmtSize(
@@ -691,6 +771,9 @@ export default function ProjectCollectionPage() {
               <span style={{ color: "var(--gold-500)", fontSize: 10 }}>◆</span>
               <span style={{ fontFamily: "var(--font-heading)", fontSize: 15, fontWeight: 700, color: "var(--gold-600)", letterSpacing: "0.1em" }}>Requirements Chat</span>
               <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--ghost-muted)", background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.25)", borderRadius: 4, padding: "1px 7px", letterSpacing: "0.04em" }}>{projectKey}</span>
+              {displayName && (
+                <span style={{ fontSize: 12, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)" }}>· {displayName}</span>
+              )}
             </div>
             <p style={{ fontSize: 11.5, color: "var(--ghost-muted)", fontWeight: 500, marginTop: 2 }}>
               {activeModel} · {totalFiles} document{totalFiles !== 1 ? "s" : ""} loaded
