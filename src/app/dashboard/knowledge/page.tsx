@@ -21,6 +21,11 @@ type ProjectGroup = {
   last_added: string;
 };
 
+type ProjectMeta = {
+  project_key: string;
+  display_name: string;
+};
+
 /* ── File filtering ─────────────────────────────────────────────── */
 const TEXT_EXTENSIONS = new Set([
   "txt","md","markdown","rst",
@@ -95,13 +100,20 @@ function blurGold(e: React.FocusEvent<HTMLInputElement>) {
 export default function KnowledgePage() {
   const router = useRouter();
 
-  const [allFiles, setAllFiles]     = useState<KBFile[]>([]);
-  const [projectKey, setProjectKey] = useState("");
-  const [dragging, setDragging]     = useState(false);
-  const [uploading, setUploading]   = useState(false);
+  const [allFiles, setAllFiles]         = useState<KBFile[]>([]);
+  const [projectKey, setProjectKey]     = useState("");
+  const [dragging, setDragging]         = useState(false);
+  const [uploading, setUploading]       = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
-  const [notice, setNotice]         = useState<{ msg: string; type: "ok" | "err" } | null>(null);
-  const [hoveredRow, setHoveredRow] = useState<string | null>(null);
+  const [notice, setNotice]             = useState<{ msg: string; type: "ok" | "err" } | null>(null);
+  const [hoveredRow, setHoveredRow]     = useState<string | null>(null);
+
+  // Display names
+  const [projectMetas, setProjectMetas] = useState<Map<string, string>>(new Map());
+  const [editingName, setEditingName]   = useState<string | null>(null); // project_key being edited
+  const [nameInput, setNameInput]       = useState("");
+  const [savingName, setSavingName]     = useState<string | null>(null);
+  const nameInputRef                    = useRef<HTMLInputElement>(null);
 
   const fileInputRef   = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -120,7 +132,39 @@ export default function KnowledgePage() {
     if (r.ok) setAllFiles(await r.json());
   }
 
-  useEffect(() => { loadFiles(); }, []);
+  async function loadProjectMetas() {
+    const r = await fetch("/api/projects");
+    if (r.ok) {
+      const data: ProjectMeta[] = await r.json();
+      setProjectMetas(new Map(data.map(p => [p.project_key, p.display_name])));
+    }
+  }
+
+  useEffect(() => { loadFiles(); loadProjectMetas(); }, []);
+
+  function startEditingName(key: string) {
+    setEditingName(key);
+    setNameInput(projectMetas.get(key) ?? "");
+    setTimeout(() => nameInputRef.current?.focus(), 50);
+  }
+
+  async function saveName(key: string) {
+    const val = nameInput.trim();
+    setSavingName(key);
+    await fetch("/api/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_key: key, display_name: val }),
+    });
+    setProjectMetas(prev => new Map(prev).set(key, val));
+    setSavingName(null);
+    setEditingName(null);
+  }
+
+  function cancelEditingName() {
+    setEditingName(null);
+    setNameInput("");
+  }
 
   async function uploadFiles(fileList: FileList | null, isFolder = false) {
     if (!fileList || !projectKey.trim()) {
@@ -350,18 +394,75 @@ export default function KnowledgePage() {
                 }}
                 onMouseEnter={() => setHoveredRow(g.project_key)}
                 onMouseLeave={() => setHoveredRow(null)}
-                onClick={() => router.push(`/dashboard/knowledge/${g.project_key}`)}
+                onClick={() => { if (editingName !== g.project_key) router.push(`/dashboard/knowledge/${g.project_key}`); }}
               >
-                {/* Project key */}
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: isHovered ? "var(--gold-600)" : "var(--ghost-text)", letterSpacing: "0.04em", transition: "color 0.15s" }}>
-                    {g.project_key}
-                  </span>
-                  {g.sow_count > 0 && (
-                    <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--gold-700)", background: "rgba(201,168,76,0.12)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 10, padding: "1px 7px", fontFamily: "var(--font-body)" }}>
-                      {g.sow_count} SOW
-                    </span>
-                  )}
+                {/* Project key + display name */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }} onClick={e => e.stopPropagation()}>
+                  <div>
+                    {/* Key badge */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700, color: isHovered ? "var(--gold-600)" : "var(--ghost-secondary)", letterSpacing: "0.04em", transition: "color 0.15s", cursor: "pointer" }}
+                        onClick={() => router.push(`/dashboard/knowledge/${g.project_key}`)}>
+                        {g.project_key}
+                      </span>
+                      {g.sow_count > 0 && (
+                        <span style={{ fontSize: 10, fontWeight: 600, color: "var(--gold-700)", background: "rgba(201,168,76,0.12)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 10, padding: "1px 6px", fontFamily: "var(--font-body)" }}>
+                          {g.sow_count} SOW
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Display name — inline edit */}
+                    {editingName === g.project_key ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={e => e.stopPropagation()}>
+                        <input
+                          ref={nameInputRef}
+                          value={nameInput}
+                          onChange={e => setNameInput(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") saveName(g.project_key);
+                            if (e.key === "Escape") cancelEditingName();
+                          }}
+                          onBlur={() => saveName(g.project_key)}
+                          placeholder="Project display name…"
+                          style={{
+                            fontSize: 13, fontWeight: 600, color: "var(--ghost-text)",
+                            fontFamily: "var(--font-body)",
+                            background: "rgba(255,255,255,0.9)",
+                            border: "1.5px solid var(--gold-500)",
+                            borderRadius: 5, padding: "3px 8px",
+                            outline: "none", width: 200,
+                            boxShadow: "0 0 0 3px rgba(201,168,76,0.14)",
+                          }}
+                        />
+                        <button onClick={() => saveName(g.project_key)} disabled={savingName === g.project_key}
+                          style={{ fontSize: 11, color: "var(--gold-700)", background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 4, padding: "3px 8px", cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }}>
+                          {savingName === g.project_key ? "…" : "✓"}
+                        </button>
+                        <button onClick={cancelEditingName}
+                          style={{ fontSize: 11, color: "var(--ghost-muted)", background: "none", border: "none", cursor: "pointer", fontFamily: "var(--font-body)" }}>
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, cursor: "text" }}
+                        onClick={() => startEditingName(g.project_key)}>
+                        {projectMetas.get(g.project_key) ? (
+                          <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ghost-text)", fontFamily: "var(--font-body)", cursor: "pointer" }}>
+                            {projectMetas.get(g.project_key)}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--ghost-muted)", fontFamily: "var(--font-body)", fontStyle: "italic" }}>
+                            Add name…
+                          </span>
+                        )}
+                        <svg width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="var(--ghost-muted)" strokeWidth={2}
+                          style={{ opacity: isHovered ? 0.8 : 0, transition: "opacity 0.15s", flexShrink: 0 }}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                        </svg>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* File counts */}
