@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useModelStatus } from "@/context/ModelStatusContext";
 
 type TextBlock  = { type: "text"; text: string };
 type ImageBlock = { type: "image_url"; image_url: { url: string } };
@@ -490,6 +491,7 @@ export default function ChatPage() {
   const [projectKeys, setProjectKeys] = useState<string[]>([]);
   const [activeModel, setActiveModel] = useState("Gemini 2.5 Pro");
   const [modelFallback, setModelFallback] = useState(false);
+  const { reportModel } = useModelStatus();
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasStarted = messages.length > 0;
@@ -546,9 +548,11 @@ export default function ChatPage() {
       if (data.model && data.model !== activeModel) {
         setModelFallback(true);
         setActiveModel(data.model);
+        reportModel(data.model);
         setTimeout(() => setModelFallback(false), 5000);
       } else if (data.model) {
         setActiveModel(data.model);
+        reportModel(data.model);
       }
       setMessages(prev => [...prev, { role: "assistant", content: data.content }]);
     } catch { setMessages(prev => [...prev, { role: "assistant", content: "Connection error. Please try again." }]); }

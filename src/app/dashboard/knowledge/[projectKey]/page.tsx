@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useModelStatus } from "@/context/ModelStatusContext";
 
 // ── Types ──────────────────────────────────────────────────────────
 type KBFile = {
@@ -126,6 +127,7 @@ export default function ProjectCollectionPage() {
   const params     = useParams();
   const router     = useRouter();
   const projectKey = (params.projectKey as string).toUpperCase();
+  const { reportModel } = useModelStatus();
 
   // ── Display name ───────────────────────────────────────────────
   const [displayName,    setDisplayName]    = useState("");
@@ -423,6 +425,7 @@ export default function ProjectCollectionPage() {
           ts: Date.now(),
         };
         setActiveModel(data.model ?? "Gemini 2.5 Pro");
+        reportModel(data.model ?? "Gemini 2.5 Pro");
         const final = [...newMessages, assistantMsg];
         setMessages(final);
         await saveChatHistory(final);
