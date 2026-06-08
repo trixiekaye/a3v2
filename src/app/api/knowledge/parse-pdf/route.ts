@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
 
     // Dynamic require bypasses pdf-parse's test-directory requirement
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfParse = require("pdf-parse/lib/pdf-parse.js") as (
+    const pdfParse = require("pdf-parse") as (
       buf: Buffer
     ) => Promise<{ text: string; numpages: number }>;
     const data = await pdfParse(buffer);
