@@ -37,7 +37,7 @@ const ModelStatusContext = createContext<ModelStatusState>({
 });
 
 const CACHE_KEY = "a3_model_status";
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours — avoid burning quota on auto-probes
 
 interface CachedStatus {
   modelStatuses: { "gemini-2.5-pro": ModelStatus; "gemini-2.0-flash": ModelStatus };
@@ -113,15 +113,12 @@ export function ModelStatusProvider({ children }: { children: React.ReactNode })
       setModelStatuses(cached.modelStatuses);
       setIsOnFallback(cached.fallback);
       setLastChecked(cached.ts);
-      // Derive label from cached active
       const label = cached.active === "gemini-2.5-pro" ? "Gemini 2.5 Pro"
                   : cached.active === "gemini-2.0-flash" ? "Gemini 2.0 Flash"
                   : "Groq · Llama 3.3";
       setActiveModel(label);
-    } else {
-      // Fire a fresh check but don't block render
-      checkStatus();
     }
+    // No auto-probe on mount — user clicks ↻ to check. Avoids burning Gemini quota.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
