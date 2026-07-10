@@ -5,6 +5,7 @@ import { AUTH_COOKIE } from "@/lib/auth";
 const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
+  "/api/keepalive", // Vercel Cron — no session cookie; route enforces CRON_SECRET itself
 ];
 
 export function proxy(request: NextRequest) {
