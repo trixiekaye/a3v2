@@ -12,7 +12,7 @@ type KBFile = {
   name: string;
   size_bytes: number;
   created_at: string;
-  category: "knowledge" | "sow";
+  category: "knowledge" | "sow" | "prompt";
 };
 
 type ChatMessage = {
@@ -140,9 +140,11 @@ export default function ProjectCollectionPage() {
   // ── Files ──────────────────────────────────────────────────────
   const [knowledgeFiles, setKnowledgeFiles] = useState<KBFile[]>([]);
   const [sowFiles,       setSowFiles]       = useState<KBFile[]>([]);
+  const [promptFiles,    setPromptFiles]    = useState<KBFile[]>([]);
   const [fileNotice, setFileNotice]         = useState<{ msg: string; type: "ok" | "err" } | null>(null);
   const [uploading,  setUploading]          = useState(false);
   const [sowUploading, setSowUploading]     = useState(false);
+  const [promptUploading, setPromptUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [deleting,   setDeleting]           = useState<string | null>(null);
   const [pdfFallback, setPdfFallback]       = useState<PdfFallback>(null);
@@ -169,6 +171,7 @@ export default function ProjectCollectionPage() {
   const kbFileRef     = useRef<HTMLInputElement>(null);
   const kbFolderRef   = useRef<HTMLInputElement>(null);
   const sowFileRef    = useRef<HTMLInputElement>(null);
+  const promptFileRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef   = useRef<HTMLTextAreaElement>(null);
 
@@ -227,6 +230,7 @@ export default function ProjectCollectionPage() {
       const files: KBFile[] = await r.json();
       setKnowledgeFiles(files.filter(f => (f.category ?? "knowledge") === "knowledge"));
       setSowFiles(files.filter(f => f.category === "sow"));
+      setPromptFiles(files.filter(f => f.category === "prompt"));
     }
   }
 
@@ -265,12 +269,13 @@ export default function ProjectCollectionPage() {
   }
 
   // ── File store helper ──────────────────────────────────────────
-  async function storeFile(name: string, content: string, category: "knowledge" | "sow") {
-    await fetch("/api/knowledge", {
+  async function storeFile(name: string, content: string, category: "knowledge" | "sow" | "prompt"): Promise<boolean> {
+    const r = await fetch("/api/knowledge", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project_key: projectKey, name, content, category }),
     });
+    return r.ok;
   }
 
   // ── Knowledge file upload ──────────────────────────────────────
@@ -369,6 +374,35 @@ export default function ProjectCollectionPage() {
       setPasteName(firstFailedName);
       setPasteText("");
       setPdfFallback({ name: firstFailedName });
+    }
+  }
+
+  // ── Prompt (.md) upload — injected into the AI's system prompt ──
+  async function uploadPrompts(fileList: FileList | null) {
+    if (!fileList) return;
+
+    setPromptUploading(true);
+    let added = 0;
+    let skipped = 0;
+
+    let failed = 0;
+    for (const file of Array.from(fileList)) {
+      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (!["md", "markdown", "txt"].includes(ext)) { skipped++; continue; }
+      const text = await file.text();
+      const ok = await storeFile(file.name, text.slice(0, MAX_BYTES), "prompt");
+      ok ? added++ : failed++;
+    }
+
+    setPromptUploading(false);
+    await loadFiles();
+
+    if (failed > 0) {
+      flashFile("Prompt upload failed — has the 'prompt' category migration been run in Supabase?", "err");
+    } else if (added > 0) {
+      flashFile(`${added} prompt file${added !== 1 ? "s" : ""} added — active in both chats for this project.`);
+    } else if (skipped > 0) {
+      flashFile("Only .md and .txt files are supported as prompts.", "err");
     }
   }
 
@@ -519,7 +553,7 @@ export default function ProjectCollectionPage() {
     );
   }
 
-  const totalFiles = knowledgeFiles.length + sowFiles.length;
+  const totalFiles = knowledgeFiles.length + sowFiles.length + promptFiles.length;
 
   /* ════════════════════════════════════════════════════════════════ */
   return (
@@ -610,8 +644,8 @@ export default function ProjectCollectionPage() {
 
           <div style={{ height: 1, width: 60, background: "linear-gradient(90deg, var(--gold-500), transparent)", marginBottom: 8 }} />
           <p style={{ fontSize: 12, color: "var(--ghost-muted)", fontWeight: 500 }}>
-            {knowledgeFiles.length} knowledge · {sowFiles.length} SOW · {fmtSize(
-              [...knowledgeFiles, ...sowFiles].reduce((s, f) => s + f.size_bytes, 0)
+            {knowledgeFiles.length} knowledge · {sowFiles.length} SOW · {promptFiles.length} prompt{promptFiles.length !== 1 ? "s" : ""} · {fmtSize(
+              [...knowledgeFiles, ...sowFiles, ...promptFiles].reduce((s, f) => s + f.size_bytes, 0)
             )}
           </p>
         </div>
@@ -680,7 +714,7 @@ export default function ProjectCollectionPage() {
         </div>
 
         {/* ── SOW DOCUMENTS section ────────────────────────────── */}
-        <div style={{ margin: "24px 0 0", flex: 1 }}>
+        <div style={{ margin: "24px 0 0" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px 10px", borderBottom: "1px solid rgba(201,168,76,0.15)", borderTop: "1px solid rgba(201,168,76,0.15)", paddingTop: 10 }}>
             <span style={{ fontFamily: "var(--font-heading)", fontSize: 9, letterSpacing: "0.22em", color: "var(--gold-700)", textTransform: "uppercase", fontWeight: 600 }}>
               ◈ State of Work
@@ -713,6 +747,41 @@ export default function ProjectCollectionPage() {
           {/* Hidden SOW input */}
           <input ref={sowFileRef} type="file" multiple accept=".pdf,.txt,.md,.markdown,.rst,.docx" style={{ display: "none" }}
             onChange={e => { uploadSow(e.target.files); (e.target as HTMLInputElement).value = ""; }} />
+        </div>
+
+        {/* ── AI PROMPTS section ───────────────────────────────── */}
+        <div style={{ margin: "24px 0 0" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 10px", borderBottom: "1px solid rgba(201,168,76,0.15)", borderTop: "1px solid rgba(201,168,76,0.15)" }}>
+            <span style={{ fontFamily: "var(--font-heading)", fontSize: 9, letterSpacing: "0.22em", color: "var(--gold-700)", textTransform: "uppercase", fontWeight: 600 }}>
+              ✦ AI Prompts
+            </span>
+            <button
+              onClick={() => promptFileRef.current?.click()}
+              disabled={promptUploading}
+              style={{ fontSize: 11.5, fontWeight: 600, color: "var(--gold-700)", background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 5, padding: "3px 9px", cursor: promptUploading ? "not-allowed" : "pointer", fontFamily: "var(--font-body)", transition: "all 0.15s" }}
+              onMouseEnter={e => { if (!promptUploading) e.currentTarget.style.background = "rgba(201,168,76,0.18)"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "rgba(201,168,76,0.1)"; }}>
+              {promptUploading ? "Uploading…" : "+ Prompt"}
+            </button>
+          </div>
+
+          <p style={{ padding: "6px 16px 10px", fontSize: 11, color: "var(--ghost-muted)", fontWeight: 500 }}>
+            .md / .txt · Injected into the AI&apos;s instructions for this project — steers both the Card Creator and Requirements chats
+          </p>
+
+          {promptFiles.length === 0 ? (
+            <p style={{ padding: "0 16px 14px", fontSize: 12.5, color: "var(--ghost-muted)", fontWeight: 500 }}>
+              No prompt files yet. Upload .md instructions to customize the AI.
+            </p>
+          ) : (
+            <div>
+              {promptFiles.map(f => <FileListItem key={f.id} f={f} />)}
+            </div>
+          )}
+
+          {/* Hidden prompt input */}
+          <input ref={promptFileRef} type="file" multiple accept=".md,.markdown,.txt" style={{ display: "none" }}
+            onChange={e => { uploadPrompts(e.target.files); (e.target as HTMLInputElement).value = ""; }} />
         </div>
 
         {/* PDF fallback paste */}

@@ -11,30 +11,46 @@ function hasImages(messages: { role: string; content: MessageContent }[]): boole
   return messages.some(m => Array.isArray(m.content) && m.content.some(b => b.type === "image_url"));
 }
 
-function buildSystem(knowledgeBase?: string): string {
-  if (!knowledgeBase) return A3_SYSTEM_PROMPT;
-  return `${A3_SYSTEM_PROMPT}\n\n---\n\n## Project Knowledge Base\n\nThe following files are provided as reference. Use them to inform card generation — extract requirements, terminology, constraints, and context.\n\n${knowledgeBase}`;
+function buildSystem({ instructions, knowledgeBase }: { instructions: string; knowledgeBase: string }): string {
+  let system = A3_SYSTEM_PROMPT;
+  if (instructions) {
+    system += `\n\n---\n\n## Project-Specific Instructions\n\nThe project owner uploaded these instructions. Follow them — where they conflict with the general guidance above, these take precedence.\n\n${instructions}`;
+  }
+  if (knowledgeBase) {
+    system += `\n\n---\n\n## Project Knowledge Base\n\nThe following files are provided as reference. Use them to inform card generation — extract requirements, terminology, constraints, and context.\n\n${knowledgeBase}`;
+  }
+  return system;
 }
 
 // ── Knowledge Base ─────────────────────────────────────────────────
-async function loadKnowledgeBase(projectKey?: string): Promise<string> {
-  if (!projectKey?.trim()) return "";
+async function loadKnowledgeBase(projectKey?: string): Promise<{ instructions: string; knowledgeBase: string }> {
+  if (!projectKey?.trim()) return { instructions: "", knowledgeBase: "" };
   const { data } = await db()
     .from("knowledge_files")
-    .select("name, content")
+    .select("name, content, category")
     .eq("project_key", projectKey.trim().toUpperCase());
-  if (!data?.length) return "";
-  return data
+  if (!data?.length) return { instructions: "", knowledgeBase: "" };
+
+  const prompts = data.filter(f => f.category === "prompt");
+  const rest    = data.filter(f => f.category !== "prompt");
+
+  // Prompt files are instructions, not reference material — no code fences
+  const instructions = prompts
+    .map((f: { name: string; content: string }) => `<!-- ${f.name} -->\n${f.content}`)
+    .join("\n\n---\n\n");
+
+  const knowledgeBase = rest
     .map((f: { name: string; content: string }) => `### ${f.name}\n\`\`\`\n${f.content}\n\`\`\``)
     .join("\n\n---\n\n");
+
+  return { instructions, knowledgeBase };
 }
 
 // ── Route ──────────────────────────────────────────────────────────
 export async function POST(request: Request) {
   try {
     const { messages, projectKey } = await request.json();
-    const knowledgeBase  = await loadKnowledgeBase(projectKey);
-    const systemContent  = buildSystem(knowledgeBase || undefined);
+    const systemContent = buildSystem(await loadKnowledgeBase(projectKey));
 
     let content: string;
     let modelLabel: string;
