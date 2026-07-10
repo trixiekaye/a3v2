@@ -3,19 +3,27 @@ import { REQUIREMENTS_SYSTEM_PROMPT } from "@/lib/requirements-prompt";
 import { db } from "@/lib/supabase";
 import { callTextCascade } from "@/lib/ai-cascade";
 
-// ── Knowledge + SOW loader ─────────────────────────────────────────
-async function loadProjectContext(projectKey: string): Promise<string> {
-  if (!projectKey.trim()) return "";
+// ── Knowledge + SOW + prompt loader ────────────────────────────────
+type ProjectContext = { instructions: string; documents: string };
+
+async function loadProjectContext(projectKey: string): Promise<ProjectContext> {
+  if (!projectKey.trim()) return { instructions: "", documents: "" };
 
   const { data } = await db()
     .from("knowledge_files")
     .select("name, content, category")
     .eq("project_key", projectKey.trim().toUpperCase());
 
-  if (!data?.length) return "";
+  if (!data?.length) return { instructions: "", documents: "" };
 
-  const knowledge = data.filter(f => (f.category ?? "knowledge") === "knowledge");
+  const prompts   = data.filter(f => f.category === "prompt");
   const sow       = data.filter(f => f.category === "sow");
+  const knowledge = data.filter(f => (f.category ?? "knowledge") === "knowledge");
+
+  // Prompt files are instructions, not reference material — no code fences
+  const instructions = prompts
+    .map((f: { name: string; content: string }) => `<!-- ${f.name} -->\n${f.content}`)
+    .join("\n\n---\n\n");
 
   const sections: string[] = [];
 
@@ -35,12 +43,18 @@ async function loadProjectContext(projectKey: string): Promise<string> {
     );
   }
 
-  return sections.join("\n\n---\n\n");
+  return { instructions, documents: sections.join("\n\n---\n\n") };
 }
 
-function buildSystem(projectContext: string): string {
-  if (!projectContext) return REQUIREMENTS_SYSTEM_PROMPT;
-  return `${REQUIREMENTS_SYSTEM_PROMPT}\n\n---\n\n## Provided Project Documents\n\nThe following documents are available. Use them as the primary source for requirements extraction.\n\n${projectContext}`;
+function buildSystem({ instructions, documents }: ProjectContext): string {
+  let system = REQUIREMENTS_SYSTEM_PROMPT;
+  if (instructions) {
+    system += `\n\n---\n\n## Project-Specific Instructions\n\nThe project owner uploaded these instructions. Follow them — where they conflict with the general guidance above, these take precedence.\n\n${instructions}`;
+  }
+  if (documents) {
+    system += `\n\n---\n\n## Provided Project Documents\n\nThe following documents are available. Use them as the primary source for requirements extraction.\n\n${documents}`;
+  }
+  return system;
 }
 
 // ── Route ──────────────────────────────────────────────────────────
@@ -48,8 +62,7 @@ export async function POST(request: Request) {
   try {
     const { messages, projectKey } = await request.json();
 
-    const projectContext = await loadProjectContext(projectKey ?? "");
-    const systemContent  = buildSystem(projectContext);
+    const systemContent = buildSystem(await loadProjectContext(projectKey ?? ""));
 
     // Larger output budget than the card chat — requirements docs run long
     const { content, modelLabel } = await callTextCascade(messages, systemContent, 8192);

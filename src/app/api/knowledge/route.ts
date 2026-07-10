@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
   }
 
   const key = project_key.toUpperCase();
-  const cat = category === "sow" ? "sow" : "knowledge";
+  const cat = category === "sow" || category === "prompt" ? category : "knowledge";
   const size_bytes = new TextEncoder().encode(content).length;
   const supabase = db();
 
