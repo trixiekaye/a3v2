@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useModelStatus } from "@/context/ModelStatusContext";
+import { DEFAULT_MODEL_LABEL } from "@/lib/model-catalog";
 
 // ── Types ──────────────────────────────────────────────────────────
 type KBFile = {
@@ -152,7 +153,7 @@ export default function ProjectCollectionPage() {
   const [messages,    setMessages]    = useState<ChatMessage[]>([]);
   const [input,       setInput]       = useState("");
   const [loading,     setLoading]     = useState(false);
-  const [activeModel, setActiveModel] = useState("Gemini 2.5 Pro");
+  const [activeModel, setActiveModel] = useState(DEFAULT_MODEL_LABEL);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [copying,     setCopying]     = useState<string | null>(null);
 
@@ -424,8 +425,8 @@ export default function ProjectCollectionPage() {
           model: data.model,
           ts: Date.now(),
         };
-        setActiveModel(data.model ?? "Gemini 2.5 Pro");
-        reportModel(data.model ?? "Gemini 2.5 Pro");
+        setActiveModel(data.model ?? DEFAULT_MODEL_LABEL);
+        reportModel(data.model ?? DEFAULT_MODEL_LABEL);
         const final = [...newMessages, assistantMsg];
         setMessages(final);
         await saveChatHistory(final);

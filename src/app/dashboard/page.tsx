@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useModelStatus } from "@/context/ModelStatusContext";
+import { DEFAULT_MODEL_LABEL } from "@/lib/model-catalog";
 
 type TextBlock  = { type: "text"; text: string };
 type ImageBlock = { type: "image_url"; image_url: { url: string } };
@@ -489,8 +490,7 @@ export default function ChatPage() {
   const [activeProject, setActiveProject] = useState("");
   const [kbFileCount, setKbFileCount] = useState(0);
   const [projectKeys, setProjectKeys] = useState<string[]>([]);
-  const [activeModel, setActiveModel] = useState("Gemini 2.5 Pro");
-  const [modelFallback, setModelFallback] = useState(false);
+  const [activeModel, setActiveModel] = useState(DEFAULT_MODEL_LABEL);
   const { reportModel } = useModelStatus();
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -544,13 +544,9 @@ export default function ChatPage() {
         setMessages(prev => [...prev, { role: "assistant", content: `⚠️ ${errMsg}` }]);
         return;
       }
-      // Track which model actually responded — show a notice if it fell back
-      if (data.model && data.model !== activeModel) {
-        setModelFallback(true);
-        setActiveModel(data.model);
-        reportModel(data.model);
-        setTimeout(() => setModelFallback(false), 5000);
-      } else if (data.model) {
+      // Track which model actually responded — the sidebar AI Engine
+      // panel reflects fallback state, so no in-chat banner is needed
+      if (data.model) {
         setActiveModel(data.model);
         reportModel(data.model);
       }
@@ -570,16 +566,6 @@ export default function ChatPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--ghost-bg)" }}>
-
-      {/* Model fallback notice */}
-      {modelFallback && (
-        <div style={{ flexShrink: 0, padding: "8px 28px" }}>
-          <div style={{ maxWidth: 700, margin: "0 auto", display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 8, background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.28)", fontSize: 12.5, fontFamily: "var(--font-body)", fontWeight: 500, color: "var(--gold-700)" }}>
-            <span style={{ fontSize: 10 }}>⚡</span>
-            Quota reached — automatically switched to <strong style={{ marginLeft: 3 }}>{activeModel}</strong>
-          </div>
-        </div>
-      )}
 
       {/* Messages */}
       {hasStarted && (

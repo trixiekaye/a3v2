@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useModelStatus, ModelStatus } from "@/context/ModelStatusContext";
+import { GEMINI_CASCADE, GROQ_TEXT } from "@/lib/model-catalog";
 
 const NAV = [
   { href: "/dashboard",            label: "New Chat",     icon: <PlusIcon /> },
@@ -81,9 +82,9 @@ export default function Sidebar() {
     return `${Math.round(diff / 3600)}h ago`;
   }
 
-  const hasStatusData =
-    modelStatuses["gemini-2.5-pro"]  !== "unknown" ||
-    modelStatuses["gemini-2.0-flash"] !== "unknown";
+  const hasStatusData = GEMINI_CASCADE.some(
+    m => modelStatuses[m.id] && modelStatuses[m.id] !== "unknown"
+  );
 
   return (
     <aside style={{
@@ -251,10 +252,9 @@ export default function Sidebar() {
           {/* Per-model quota rows — only shown once we have data */}
           {hasStatusData && (
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              {(["gemini-2.5-pro", "gemini-2.0-flash"] as const).map(id => {
+              {GEMINI_CASCADE.map(({ id, label }) => {
                 const status = modelStatuses[id];
-                if (status === "unknown") return null;
-                const label   = id === "gemini-2.5-pro" ? "Gemini 2.5 Pro" : "Gemini 2.0 Flash";
+                if (!status || status === "unknown") return null;
                 const isQuota = status === "quota";
                 return (
                   <div key={id} style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -280,7 +280,7 @@ export default function Sidebar() {
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                 <StatusDot status="ok" />
                 <span style={{ fontSize: 10, fontFamily: "var(--font-body)", color: "rgba(110,231,160,0.5)", fontWeight: 400 }}>
-                  Groq · Llama 3.3
+                  {GROQ_TEXT.label}
                 </span>
               </div>
             </div>

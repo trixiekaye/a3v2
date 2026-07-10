@@ -1,23 +1,17 @@
 import { NextResponse } from "next/server";
+import { GEMINI_BASE_URL, GEMINI_CASCADE, GROQ_TEXT } from "@/lib/ai-cascade";
 
-export const runtime    = "nodejs";
+export const runtime     = "nodejs";
 export const maxDuration = 20;
 
-const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
-
-const GEMINI_MODELS = [
-  { id: "gemini-2.5-pro",   label: "Gemini 2.5 Pro"   },
-  { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-] as const;
-
-type ModelId = (typeof GEMINI_MODELS)[number]["id"];
-type Status  = "ok" | "quota" | "error";
+type Status = "ok" | "quota" | "error";
 
 /**
  * Probe a single Gemini model with a 1-token request to check quota.
  * Returns "ok" if the model responds, "quota" if exhausted (429), "error" otherwise.
+ * Only called when the user explicitly clicks refresh — never automatically.
  */
-async function probeGemini(modelId: ModelId): Promise<Status> {
+async function probeGemini(modelId: string): Promise<Status> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return "error";
 
@@ -55,34 +49,19 @@ async function probeGemini(modelId: ModelId): Promise<Status> {
 }
 
 export async function GET() {
-  const apiKey = process.env.GEMINI_API_KEY;
+  // Probe every Gemini cascade model in parallel
+  const statuses = await Promise.all(GEMINI_CASCADE.map(m => probeGemini(m.id)));
 
-  // Run both probes in parallel
-  const [proStatus, flashStatus] = await Promise.all([
-    apiKey ? probeGemini("gemini-2.5-pro")   : Promise.resolve<Status>("error"),
-    apiKey ? probeGemini("gemini-2.0-flash") : Promise.resolve<Status>("error"),
-  ]);
+  const models: Record<string, Status> = { groq: "ok" };
+  GEMINI_CASCADE.forEach((m, i) => { models[m.id] = statuses[i]; });
 
-  const models: Record<string, Status> = {
-    "gemini-2.5-pro":  proStatus,
-    "gemini-2.0-flash": flashStatus,
-    "groq":              "ok",
-  };
+  // Determine the best available model (first ok in cascade order, else Groq)
+  const firstOk = GEMINI_CASCADE.find((_, i) => statuses[i] === "ok");
 
-  // Determine the best available model
-  let active      = "groq";
-  let activeLabel = "Groq · Llama 3.3";
-  let fallback    = true;
-
-  if (proStatus === "ok") {
-    active      = "gemini-2.5-pro";
-    activeLabel = "Gemini 2.5 Pro";
-    fallback    = false;
-  } else if (flashStatus === "ok") {
-    active      = "gemini-2.0-flash";
-    activeLabel = "Gemini 2.0 Flash";
-    fallback    = false;
-  }
-
-  return NextResponse.json({ models, active, activeLabel, fallback });
+  return NextResponse.json({
+    models,
+    active:      firstOk?.id    ?? "groq",
+    activeLabel: firstOk?.label ?? GROQ_TEXT.label,
+    fallback:    !firstOk,
+  });
 }
