@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { DEFAULT_MODEL_LABEL, GROQ_TEXT, labelFor } from "@/lib/model-catalog";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 export type ModelStatus = "ok" | "quota" | "error" | "unknown";
@@ -8,13 +9,10 @@ export type ModelStatus = "ok" | "quota" | "error" | "unknown";
 export interface ModelStatusState {
   /** Which model label is currently active (last reported by any chat) */
   activeModel: string;
-  /** True when we've fallen back to Groq (Gemini is exhausted) */
+  /** True when we've fallen back to Groq (all Gemini models unavailable) */
   isOnFallback: boolean;
-  /** Per-model quota status from the last check */
-  modelStatuses: {
-    "gemini-2.5-pro": ModelStatus;
-    "gemini-2.0-flash": ModelStatus;
-  };
+  /** Per-model quota status from the last check, keyed by model id */
+  modelStatuses: Record<string, ModelStatus>;
   /** When the last status check ran (epoch ms) */
   lastChecked: number | null;
   /** True while a status check is in flight */
@@ -27,20 +25,20 @@ export interface ModelStatusState {
 
 // ── Context ────────────────────────────────────────────────────────────────
 const ModelStatusContext = createContext<ModelStatusState>({
-  activeModel:    "Gemini 2.5 Pro",
-  isOnFallback:   false,
-  modelStatuses:  { "gemini-2.5-pro": "unknown", "gemini-2.0-flash": "unknown" },
-  lastChecked:    null,
-  checking:       false,
-  checkStatus:    async () => {},
-  reportModel:    () => {},
+  activeModel:   DEFAULT_MODEL_LABEL,
+  isOnFallback:  false,
+  modelStatuses: {},
+  lastChecked:   null,
+  checking:      false,
+  checkStatus:   async () => {},
+  reportModel:   () => {},
 });
 
-const CACHE_KEY = "a3_model_status";
+const CACHE_KEY = "a3_model_status_v2";
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours — avoid burning quota on auto-probes
 
 interface CachedStatus {
-  modelStatuses: { "gemini-2.5-pro": ModelStatus; "gemini-2.0-flash": ModelStatus };
+  modelStatuses: Record<string, ModelStatus>;
   active: string;
   fallback: boolean;
   ts: number;
@@ -68,14 +66,11 @@ function saveCache(data: CachedStatus) {
 
 // ── Provider ───────────────────────────────────────────────────────────────
 export function ModelStatusProvider({ children }: { children: React.ReactNode }) {
-  const [activeModel,   setActiveModel]   = useState("Gemini 2.5 Pro");
+  const [activeModel,   setActiveModel]   = useState(DEFAULT_MODEL_LABEL);
   const [isOnFallback,  setIsOnFallback]  = useState(false);
-  const [modelStatuses, setModelStatuses] = useState<{ "gemini-2.5-pro": ModelStatus; "gemini-2.0-flash": ModelStatus }>({
-    "gemini-2.5-pro":  "unknown",
-    "gemini-2.0-flash": "unknown",
-  });
-  const [lastChecked, setLastChecked] = useState<number | null>(null);
-  const [checking,    setChecking]    = useState(false);
+  const [modelStatuses, setModelStatuses] = useState<Record<string, ModelStatus>>({});
+  const [lastChecked,   setLastChecked]   = useState<number | null>(null);
+  const [checking,      setChecking]      = useState(false);
   const didInit = useRef(false);
 
   const checkStatus = useCallback(async () => {
@@ -85,16 +80,12 @@ export function ModelStatusProvider({ children }: { children: React.ReactNode })
       const res  = await fetch("/api/model-status");
       const data = await res.json();
       if (data.models) {
-        const statuses = {
-          "gemini-2.5-pro":  data.models["gemini-2.5-pro"]  as ModelStatus,
-          "gemini-2.0-flash": data.models["gemini-2.0-flash"] as ModelStatus,
-        };
-        setModelStatuses(statuses);
+        setModelStatuses(data.models);
         setIsOnFallback(!!data.fallback);
         if (data.activeLabel) setActiveModel(data.activeLabel);
         const ts = Date.now();
         setLastChecked(ts);
-        saveCache({ modelStatuses: statuses, active: data.active, fallback: !!data.fallback, ts });
+        saveCache({ modelStatuses: data.models, active: data.active, fallback: !!data.fallback, ts });
       }
     } catch {
       // network error — keep stale state
@@ -103,7 +94,8 @@ export function ModelStatusProvider({ children }: { children: React.ReactNode })
     }
   }, [checking]);
 
-  // ── On mount: load from cache or fetch fresh ──────────────────────────
+  // ── On mount: hydrate from cache only. No auto-probe — the user clicks ↻
+  //    to check. Avoids burning Gemini quota just by opening the app. ──────
   useEffect(() => {
     if (didInit.current) return;
     didInit.current = true;
@@ -113,30 +105,15 @@ export function ModelStatusProvider({ children }: { children: React.ReactNode })
       setModelStatuses(cached.modelStatuses);
       setIsOnFallback(cached.fallback);
       setLastChecked(cached.ts);
-      const label = cached.active === "gemini-2.5-pro" ? "Gemini 2.5 Pro"
-                  : cached.active === "gemini-2.0-flash" ? "Gemini 2.0 Flash"
-                  : "Groq · Llama 3.3";
-      setActiveModel(label);
+      setActiveModel(cached.active === "groq" ? GROQ_TEXT.label : labelFor(cached.active));
     }
-    // No auto-probe on mount — user clicks ↻ to check. Avoids burning Gemini quota.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── reportModel: called by chat pages after each AI response ──────────
   const reportModel = useCallback((label: string) => {
     setActiveModel(label);
-    const isGroq = label.toLowerCase().includes("groq") || label.toLowerCase().includes("llama");
+    const isGroq = label.toLowerCase().includes("groq");
     setIsOnFallback(isGroq);
-    // Invalidate cache so next sidebar check reflects reality
-    if (isGroq) {
-      try {
-        const cached = loadCache();
-        if (cached) {
-          cached.fallback = true;
-          saveCache(cached);
-        }
-      } catch { /* ignore */ }
-    }
   }, []);
 
   return (
